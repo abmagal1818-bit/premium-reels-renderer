@@ -1,0 +1,15 @@
+{
+  "marca": "={{ $json.body.marca }}",
+  "modelo": "={{ $json.body.modelo }}",
+  "versao": "={{ $json.body.versao }}",
+  "spec_completa": "={{ $json.body.spec_completa }}",
+  "ano_fabricacao": "={{ $json.body.ano_fabricacao }}",
+  "ano_modelo": "={{ $json.body.ano_modelo }}",
+  "km": "={{ $json.body.km }}",
+  "cambio": "={{ $json.body.cambio }}",
+  "combustivel": "={{ $json.body.combustivel }}",
+  "preco": "={{ $json.body.preco }}",
+  "foto_capa": "={{ $json.body.foto_capa }}",
+  "fotos": "={{ $json.body.fotos }}",
+  "music_url": "https://kbmryoeevdxvugcelflp.supabase.co/storage/v1/object/public/veiculos/Musicas/WA0004-fix.mp3"
+}

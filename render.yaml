@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: premium-reels-renderer
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: PREMIUM_LOGO_URL
+        value: https://kbmryoeevdxvugcelflp.supabase.co/storage/v1/object/public/veiculos/Musicas/Logo%20minimalista%20de%20carro%20esportivo.png
