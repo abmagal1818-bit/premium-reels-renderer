@@ -59,6 +59,14 @@ LOGO_URL=os.environ.get(
 )
 MUSIC_URL=os.environ.get("PREMIUM_MUSIC_URL","")
 
+SUPABASE_URL=os.environ.get(
+    "SUPABASE_URL",
+    "https://kbmryoeevdxvugcelflp.supabase.co"
+).rstrip("/")
+SUPABASE_BUCKET=os.environ.get("SUPABASE_BUCKET","veiculos")
+SUPABASE_SERVICE_KEY=os.environ.get("SUPABASE_SERVICE_KEY","")
+SUPABASE_REELS_FOLDER=os.environ.get("SUPABASE_REELS_FOLDER","reels")
+
 def F(path,size):
     if path:
         try:
@@ -334,6 +342,38 @@ def render_video(data):
     log(f"{job}: pronto {final.name}")
     return job, final
 
+def upload_to_supabase(file_path, job):
+    if not SUPABASE_SERVICE_KEY:
+        raise RuntimeError("SUPABASE_SERVICE_KEY não configurada no Render.")
+
+    object_name=f"{SUPABASE_REELS_FOLDER}/{job}.mp4"
+    upload_url=f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{object_name}"
+
+    headers={
+        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+        "apikey": SUPABASE_SERVICE_KEY,
+        "Content-Type": "video/mp4",
+        "x-upsert": "true",
+        "cache-control": "3600",
+    }
+
+    log(f"{job}: enviando MP4 para Supabase Storage")
+    with open(file_path,"rb") as fh:
+        r=requests.post(upload_url,headers=headers,data=fh,timeout=180)
+
+    if r.status_code not in (200,201):
+        raise RuntimeError(
+            f"Falha upload Supabase HTTP {r.status_code}: {r.text[:1000]}"
+        )
+
+    public_url=(
+        f"{SUPABASE_URL}/storage/v1/object/public/"
+        f"{SUPABASE_BUCKET}/{object_name}"
+    )
+    log(f"{job}: Supabase OK")
+    return public_url
+
+
 @APP.get("/health")
 def health():
     return {
@@ -343,6 +383,12 @@ def health():
             "cond": FONT_COND,
             "bold": FONT_BOLD,
             "reg": FONT_REG
+        },
+        "supabase": {
+            "configured": bool(SUPABASE_SERVICE_KEY),
+            "url": SUPABASE_URL,
+            "bucket": SUPABASE_BUCKET,
+            "folder": SUPABASE_REELS_FOLDER
         }
     }
 
@@ -352,7 +398,15 @@ def render():
         data=request.get_json(force=True)
         job, final=render_video(data)
         base=request.host_url.rstrip("/")
-        return jsonify({"status":"done","id":job,"url":f"{base}/videos/{job}.mp4"})
+        render_url=f"{base}/videos/{job}.mp4"
+        supabase_url=upload_to_supabase(final,job)
+        return jsonify({
+            "status":"done",
+            "id":job,
+            "url":supabase_url,
+            "supabase_url":supabase_url,
+            "render_url":render_url
+        })
     except subprocess.CalledProcessError as e:
         import traceback
         log("FFmpeg falhou")
