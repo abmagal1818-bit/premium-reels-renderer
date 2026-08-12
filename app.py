@@ -272,10 +272,10 @@ def render_video(data):
             "-r",str(FPS),
             "-vsync","cfr",
             "-c:v","libx264",
-            "-preset","veryfast",
-            "-crf","20",
-            "-profile:v","high",
-            "-level","4.1",
+            "-preset","ultrafast",
+            "-crf","21",
+            "-profile:v","main",
+            "-level","4.0",
             "-pix_fmt","yuv420p",
             "-g","60",
             "-keyint_min","60",
@@ -299,18 +299,10 @@ def render_video(data):
     concat.write_text("".join([f"file '{s}'\n" for s in segs[:5]]))
     silent=work/"silent.mp4"
     subprocess.run([
-        "ffmpeg","-y","-threads","1","-f","concat","-safe","0","-i",str(concat),
-        "-r",str(FPS),
-        "-vsync","cfr",
-        "-c:v","libx264",
-        "-preset","veryfast",
-        "-crf","20",
-        "-profile:v","high",
-        "-level","4.1",
-        "-pix_fmt","yuv420p",
-        "-g","60",
-        "-keyint_min","60",
-        "-sc_threshold","0",
+        "ffmpeg","-y","-threads","1",
+        "-fflags","+genpts",
+        "-f","concat","-safe","0","-i",str(concat),
+        "-c:v","copy",
         "-movflags","+faststart",
         "-an",
         str(silent)
@@ -323,7 +315,8 @@ def render_video(data):
         music=work/"music.mp3"
         download(music_url,music)
         subprocess.run([
-            "ffmpeg","-y","-threads","1","-i",str(silent),"-i",str(music),
+            "ffmpeg","-y","-threads","1",
+            "-i",str(silent),"-i",str(music),
             "-map","0:v:0","-map","1:a:0",
             "-c:v","copy",
             "-c:a","aac",
@@ -336,12 +329,7 @@ def render_video(data):
             str(final)
         ],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True)
     else:
-        subprocess.run([
-            "ffmpeg","-y","-threads","1","-i",str(silent),
-            "-c:v","copy",
-            "-movflags","+faststart",
-            str(final)
-        ],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True)
+        final.write_bytes(silent.read_bytes())
 
     log(f"{job}: pronto {final.name}")
     return job, final
@@ -385,7 +373,9 @@ def probe(name):
     try:
         p=subprocess.run([
             "ffprobe","-v","error",
-            "-show_entries","format=format_name,duration,bit_rate:stream=index,codec_name,codec_type,profile,pix_fmt,width,height,r_frame_rate,avg_frame_rate,sample_rate,channels",
+            "-show_entries",
+            "format=format_name,duration,bit_rate:"
+            "stream=index,codec_name,codec_type,profile,pix_fmt,width,height,r_frame_rate,avg_frame_rate,sample_rate,channels",
             "-of","json",str(target)
         ],check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
         import json
