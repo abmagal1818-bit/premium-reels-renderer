@@ -14,9 +14,41 @@ VIDEOS.mkdir(exist_ok=True)
 
 W,H,FPS = 1080,1920,30
 RED=(235,35,42); WHITE=(248,248,248); BLACK=(5,5,5)
-FONT_COND="/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf"
-FONT_BOLD="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-FONT_REG="/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+FONT_CANDIDATES = {
+    "cond": [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSansCondensed-Bold.ttf",
+        "/usr/local/lib/python3.12/site-packages/PIL/fonts/DejaVuSansCondensed-Bold.ttf",
+    ],
+    "bold": [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/local/lib/python3.12/site-packages/PIL/fonts/DejaVuSans-Bold.ttf",
+    ],
+    "reg": [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+        "/usr/local/lib/python3.12/site-packages/PIL/fonts/DejaVuSans.ttf",
+    ],
+}
+
+def resolve_font(kind):
+    for p in FONT_CANDIDATES[kind]:
+        if os.path.exists(p):
+            return p
+    # fc-match is installed with fontconfig pulled by Debian font packages in most images.
+    try:
+        family = {"cond":"DejaVu Sans Condensed:style=Bold","bold":"DejaVu Sans:style=Bold","reg":"DejaVu Sans"}[kind]
+        p = subprocess.check_output(["fc-match","-f","%{file}",family], text=True).strip()
+        if p and os.path.exists(p):
+            return p
+    except Exception:
+        pass
+    return None
+
+FONT_COND=resolve_font("cond")
+FONT_BOLD=resolve_font("bold")
+FONT_REG=resolve_font("reg")
 
 LOGO_URL=os.environ.get(
     "PREMIUM_LOGO_URL",
@@ -24,7 +56,17 @@ LOGO_URL=os.environ.get(
 )
 MUSIC_URL=os.environ.get("PREMIUM_MUSIC_URL","")
 
-def F(path,size): return ImageFont.truetype(path,size)
+def F(path,size):
+    if path:
+        try:
+            return ImageFont.truetype(path,size)
+        except Exception:
+            pass
+    # Last-resort fallback prevents "cannot open resource".
+    try:
+        return ImageFont.truetype("DejaVuSans.ttf", size)
+    except Exception:
+        return ImageFont.load_default()
 
 def download(url, dest):
     r=requests.get(url,timeout=40)
@@ -228,7 +270,15 @@ def render_video(data):
 
 @APP.get("/health")
 def health():
-    return {"ok": True, "service":"premium-renderer"}
+    return {
+        "ok": True,
+        "service":"premium-renderer",
+        "fonts": {
+            "cond": FONT_COND,
+            "bold": FONT_BOLD,
+            "reg": FONT_REG
+        }
+    }
 
 @APP.post("/render")
 def render():
