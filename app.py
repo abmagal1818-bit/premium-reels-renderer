@@ -95,8 +95,8 @@ def make_bg(photo):
     bg=src.resize((int(src.width*scale),int(src.height*scale)),Image.Resampling.LANCZOS)
     l=(bg.width-W)//2; t=(bg.height-H)//2
     bg=bg.crop((l,t,l+W,t+H)).filter(ImageFilter.GaussianBlur(38))
-    bg=ImageEnhance.Brightness(bg).enhance(.20).convert("RGBA")
-    return Image.alpha_composite(bg,Image.new("RGBA",(W,H),(0,0,0,110)))
+    bg=ImageEnhance.Brightness(bg).enhance(.34).convert("RGBA")
+    return Image.alpha_composite(bg,Image.new("RGBA",(W,H),(0,0,0,58)))
 
 def integrated_car(im, photo, top=300, maxw=1070, maxh=760, feather=105):
     # Versão otimizada para pouca RAM/CPU:
@@ -112,20 +112,20 @@ def integrated_car(im, photo, top=300, maxw=1070, maxh=760, feather=105):
     # Máscara central opaca, bordas suavizadas por blur.
     mask=Image.new("L",(fw,fh),0)
     md=ImageDraw.Draw(mask)
-    inset=max(35,min(feather, min(fw,fh)//4))
+    inset=max(24,min(62, min(fw,fh)//7))
     md.rounded_rectangle(
         (inset,inset,fw-inset,fh-inset),
         radius=max(20,inset//2),
         fill=255
     )
-    mask=mask.filter(ImageFilter.GaussianBlur(max(24,inset//2)))
+    mask=mask.filter(ImageFilter.GaussianBlur(max(16,inset//3)))
     fg.putalpha(mask)
 
     # Sombra menor para economizar memória.
     shadow=Image.new("RGBA",(fw+60,fh+60),(0,0,0,0))
     sd=ImageDraw.Draw(shadow)
-    sd.rounded_rectangle((30,30,fw+30,fh+30),35,fill=(0,0,0,150))
-    shadow=shadow.filter(ImageFilter.GaussianBlur(28))
+    sd.rounded_rectangle((30,30,fw+30,fh+30),35,fill=(0,0,0,82))
+    shadow=shadow.filter(ImageFilter.GaussianBlur(22))
     im.alpha_composite(shadow,(x-30,top-30))
     im.alpha_composite(fg,(x,top))
 
@@ -214,7 +214,7 @@ def build_frame(photo, logo, data, out):
     d.line((245,1435,835,1435),fill=RED,width=3)
 
     # área escura inferior com logo grande
-    d.rectangle((0,1480,W,H),fill=(0,0,0,95))
+    d.rectangle((0,1480,W,H),fill=(0,0,0,72))
     lg=logo.copy()
     sc=min(690/lg.width,260/lg.height)
     lg=lg.resize((int(lg.width*sc),int(lg.height*sc)),Image.Resampling.LANCZOS)
