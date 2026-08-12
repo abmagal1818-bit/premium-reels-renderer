@@ -6,6 +6,9 @@ from flask import Flask, request, jsonify, send_from_directory
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
 
 APP = Flask(__name__)
+
+def log(msg):
+    print(f"[premium-renderer] {msg}", flush=True)
 BASE = Path(__file__).parent
 TMP = BASE / "tmp"
 VIDEOS = BASE / "videos"
@@ -96,29 +99,38 @@ def make_bg(photo):
     return Image.alpha_composite(bg,Image.new("RGBA",(W,H),(0,0,0,110)))
 
 def integrated_car(im, photo, top=300, maxw=1070, maxh=760, feather=105):
+    # Versão otimizada para pouca RAM/CPU:
+    # sem loop Python pixel-a-pixel; cria máscara a partir de retângulos + GaussianBlur.
     src=Image.open(photo).convert("RGB")
     sc=min(maxw/src.width,maxh/src.height)
     fg=src.resize((int(src.width*sc),int(src.height*sc)),Image.Resampling.LANCZOS)
     fg=ImageEnhance.Contrast(fg).enhance(1.05)
     fg=ImageEnhance.Brightness(fg).enhance(1.02).convert("RGBA")
-    fw,fh=fg.size; x=(W-fw)//2
+    fw,fh=fg.size
+    x=(W-fw)//2
 
-    mask=Image.new("L",(fw,fh),255)
-    m=mask.load()
-    for yy in range(fh):
-        for xx in range(fw):
-            edge=min(xx,fw-1-xx,yy,fh-1-yy)
-            if edge<feather:
-                m[xx,yy]=int(255*(edge/feather)**0.85)
-    mask=mask.filter(ImageFilter.GaussianBlur(14))
+    # Máscara central opaca, bordas suavizadas por blur.
+    mask=Image.new("L",(fw,fh),0)
+    md=ImageDraw.Draw(mask)
+    inset=max(35,min(feather, min(fw,fh)//4))
+    md.rounded_rectangle(
+        (inset,inset,fw-inset,fh-inset),
+        radius=max(20,inset//2),
+        fill=255
+    )
+    mask=mask.filter(ImageFilter.GaussianBlur(max(24,inset//2)))
     fg.putalpha(mask)
 
-    shadow=Image.new("RGBA",(fw+120,fh+120),(0,0,0,0))
+    # Sombra menor para economizar memória.
+    shadow=Image.new("RGBA",(fw+60,fh+60),(0,0,0,0))
     sd=ImageDraw.Draw(shadow)
-    sd.rounded_rectangle((60,60,fw+60,fh+60),45,fill=(0,0,0,190))
-    shadow=shadow.filter(ImageFilter.GaussianBlur(45))
-    im.alpha_composite(shadow,(x-60,top-60))
+    sd.rounded_rectangle((30,30,fw+30,fh+30),35,fill=(0,0,0,150))
+    shadow=shadow.filter(ImageFilter.GaussianBlur(28))
+    im.alpha_composite(shadow,(x-30,top-30))
     im.alpha_composite(fg,(x,top))
+
+    # Libera referências grandes cedo.
+    del shadow, mask, fg, src
 
 def center_text(d,y,text,f,fill=WHITE,stroke=0,stroke_fill=BLACK):
     bb=d.textbbox((0,0),text,font=f,stroke_width=stroke)
@@ -214,58 +226,86 @@ def build_frame(photo, logo, data, out):
     im.convert("RGB").save(out,quality=96,subsampling=0)
 
 def render_video(data):
+    import gc
     job=uuid.uuid4().hex
-    work=TMP/job; work.mkdir(parents=True,exist_ok=True)
+    work=TMP/job
+    work.mkdir(parents=True,exist_ok=True)
+    log(f"{job}: início")
 
     fotos=data.get("fotos") or []
     if data.get("foto_capa") and data["foto_capa"] not in fotos:
         fotos=[data["foto_capa"]]+fotos
     fotos=[x for x in fotos if x][:5]
-    if not fotos: raise ValueError("Nenhuma foto recebida.")
+    if not fotos:
+        raise ValueError("Nenhuma foto recebida.")
 
+    log(f"{job}: baixando logo")
     logo_path=work/"logo.png"
     download(LOGO_URL,logo_path)
     logo=clean_logo(logo_path)
+    log(f"{job}: logo OK")
 
-    cards=[]
+    # Renderiza e codifica UMA cena por vez, liberando memória entre elas.
+    segs=[]
     for i,url in enumerate(fotos):
-        p=work/f"photo{i}.jpg"; download(url,p)
+        log(f"{job}: foto {i+1}/{len(fotos)} download")
+        p=work/f"photo{i}.jpg"
+        download(url,p)
+
+        log(f"{job}: foto {i+1} card")
         card=work/f"card{i}.jpg"
         build_frame(p,logo,data,card)
-        cards.append(card)
+        gc.collect()
 
-    # Se vier menos de 5 fotos, repete a última.
-    while len(cards)<5: cards.append(cards[-1])
-
-    segs=[]
-    for i,card in enumerate(cards[:5]):
-        seg=work/f"seg{i}.mp4"; segs.append(seg)
-        duration=3; frames=duration*FPS
+        log(f"{job}: foto {i+1} ffmpeg")
+        seg=work/f"seg{i}.mp4"
+        segs.append(seg)
+        duration=3
+        frames=duration*FPS
         vf=(f"zoompan=z='min(zoom+0.00010,1.006)':"
             f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
             f"d={frames}:s=1080x1920:fps={FPS},format=yuv420p")
-        subprocess.run(["ffmpeg","-y","-loop","1","-i",str(card),"-vf",vf,"-t",str(duration),
-                        "-r",str(FPS),"-c:v","libx264","-crf","18","-preset","medium",str(seg)],
-                       check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        subprocess.run([
+            "ffmpeg","-y","-threads","1","-loop","1","-i",str(card),
+            "-vf",vf,"-t",str(duration),"-r",str(FPS),
+            "-c:v","libx264","-preset","ultrafast","-crf","20",
+            "-pix_fmt","yuv420p",str(seg)
+        ],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True)
+        # Remove foto/card depois de codificar para reduzir disco/RAM cache.
+        try: p.unlink(missing_ok=True)
+        except: pass
+        try: card.unlink(missing_ok=True)
+        except: pass
+        gc.collect()
 
+    while len(segs)<5:
+        segs.append(segs[-1])
+
+    log(f"{job}: concatenando")
     concat=work/"concat.txt"
-    concat.write_text("".join([f"file '{s}'\n" for s in segs]))
+    concat.write_text("".join([f"file '{s}'\n" for s in segs[:5]]))
     silent=work/"silent.mp4"
-    subprocess.run(["ffmpeg","-y","-f","concat","-safe","0","-i",str(concat),
-                    "-c:v","libx264","-crf","18","-preset","medium","-pix_fmt","yuv420p",
-                    "-movflags","+faststart",str(silent)],
-                   check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    subprocess.run([
+        "ffmpeg","-y","-threads","1","-f","concat","-safe","0","-i",str(concat),
+        "-c","copy","-movflags","+faststart",str(silent)
+    ],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True)
 
     final=VIDEOS/f"{job}.mp4"
     music_url=data.get("music_url") or MUSIC_URL
     if music_url:
-        music=work/"music.mp3"; download(music_url,music)
-        subprocess.run(["ffmpeg","-y","-i",str(silent),"-i",str(music),
-                        "-map","0:v:0","-map","1:a:0","-c:v","copy","-c:a","aac","-b:a","160k",
-                        "-shortest","-movflags","+faststart",str(final)],
-                       check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        log(f"{job}: áudio")
+        music=work/"music.mp3"
+        download(music_url,music)
+        subprocess.run([
+            "ffmpeg","-y","-threads","1","-i",str(silent),"-i",str(music),
+            "-map","0:v:0","-map","1:a:0","-c:v","copy",
+            "-c:a","aac","-b:a","128k","-shortest",
+            "-movflags","+faststart",str(final)
+        ],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True)
     else:
         final.write_bytes(silent.read_bytes())
+
+    log(f"{job}: pronto {final.name}")
     return job, final
 
 @APP.get("/health")
@@ -287,7 +327,16 @@ def render():
         job, final=render_video(data)
         base=request.host_url.rstrip("/")
         return jsonify({"status":"done","id":job,"url":f"{base}/videos/{job}.mp4"})
+    except subprocess.CalledProcessError as e:
+        import traceback
+        log("FFmpeg falhou")
+        print(e.stderr or str(e), flush=True)
+        traceback.print_exc()
+        return jsonify({"status":"error","stage":"ffmpeg","error":str(e),"stderr":(e.stderr or "")[-3000:]}),500
     except Exception as e:
+        import traceback
+        log(f"erro: {e}")
+        traceback.print_exc()
         return jsonify({"status":"error","error":str(e)}),500
 
 @APP.get("/videos/<name>")
