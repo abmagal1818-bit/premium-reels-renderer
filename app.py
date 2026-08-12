@@ -267,9 +267,22 @@ def render_video(data):
             f"d={frames}:s=1080x1920:fps={FPS},format=yuv420p")
         subprocess.run([
             "ffmpeg","-y","-threads","1","-loop","1","-i",str(card),
-            "-vf",vf,"-t",str(duration),"-r",str(FPS),
-            "-c:v","libx264","-preset","ultrafast","-crf","20",
-            "-pix_fmt","yuv420p",str(seg)
+            "-vf",vf,
+            "-t",str(duration),
+            "-r",str(FPS),
+            "-vsync","cfr",
+            "-c:v","libx264",
+            "-preset","veryfast",
+            "-crf","20",
+            "-profile:v","high",
+            "-level","4.1",
+            "-pix_fmt","yuv420p",
+            "-g","60",
+            "-keyint_min","60",
+            "-sc_threshold","0",
+            "-movflags","+faststart",
+            "-an",
+            str(seg)
         ],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True)
         # Remove foto/card depois de codificar para reduzir disco/RAM cache.
         try: p.unlink(missing_ok=True)
@@ -287,7 +300,20 @@ def render_video(data):
     silent=work/"silent.mp4"
     subprocess.run([
         "ffmpeg","-y","-threads","1","-f","concat","-safe","0","-i",str(concat),
-        "-c","copy","-movflags","+faststart",str(silent)
+        "-r",str(FPS),
+        "-vsync","cfr",
+        "-c:v","libx264",
+        "-preset","veryfast",
+        "-crf","20",
+        "-profile:v","high",
+        "-level","4.1",
+        "-pix_fmt","yuv420p",
+        "-g","60",
+        "-keyint_min","60",
+        "-sc_threshold","0",
+        "-movflags","+faststart",
+        "-an",
+        str(silent)
     ],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True)
 
     final=VIDEOS/f"{job}.mp4"
@@ -298,12 +324,24 @@ def render_video(data):
         download(music_url,music)
         subprocess.run([
             "ffmpeg","-y","-threads","1","-i",str(silent),"-i",str(music),
-            "-map","0:v:0","-map","1:a:0","-c:v","copy",
-            "-c:a","aac","-b:a","128k","-shortest",
-            "-movflags","+faststart",str(final)
+            "-map","0:v:0","-map","1:a:0",
+            "-c:v","copy",
+            "-c:a","aac",
+            "-profile:a","aac_low",
+            "-ar","44100",
+            "-ac","2",
+            "-b:a","128k",
+            "-shortest",
+            "-movflags","+faststart",
+            str(final)
         ],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True)
     else:
-        final.write_bytes(silent.read_bytes())
+        subprocess.run([
+            "ffmpeg","-y","-threads","1","-i",str(silent),
+            "-c:v","copy",
+            "-movflags","+faststart",
+            str(final)
+        ],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True)
 
     log(f"{job}: pronto {final.name}")
     return job, final
@@ -338,6 +376,23 @@ def render():
         log(f"erro: {e}")
         traceback.print_exc()
         return jsonify({"status":"error","error":str(e)}),500
+
+@APP.get("/probe/<name>")
+def probe(name):
+    target=VIDEOS/name
+    if not target.exists():
+        return jsonify({"status":"error","error":"video not found"}),404
+    try:
+        p=subprocess.run([
+            "ffprobe","-v","error",
+            "-show_entries","format=format_name,duration,bit_rate:stream=index,codec_name,codec_type,profile,pix_fmt,width,height,r_frame_rate,avg_frame_rate,sample_rate,channels",
+            "-of","json",str(target)
+        ],check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        import json
+        return jsonify(json.loads(p.stdout))
+    except Exception as e:
+        return jsonify({"status":"error","error":str(e)}),500
+
 
 @APP.get("/videos/<name>")
 def videos(name):
