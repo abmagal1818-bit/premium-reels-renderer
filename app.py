@@ -6,7 +6,8 @@ from flask import Flask, request, jsonify, send_from_directory
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
 
 APP = Flask(__name__)
-
+from app_story import story_bp
+APP.register_blueprint(story_bp)
 def log(msg):
     print(f"[premium-renderer] {msg}", flush=True)
 BASE = Path(__file__).parent
