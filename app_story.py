@@ -11,7 +11,6 @@ RED = (235, 25, 34)
 WHITE = (248, 248, 248)
 BLACK = (4, 4, 5)
 GRAY = (170, 170, 170)
-DARK = (10, 10, 12)
 
 FONT_BOLD = next((p for p in [
     "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf",
@@ -26,6 +25,7 @@ SUPABASE_URL = os.environ.get(
     "SUPABASE_URL",
     "https://kbmryoeevdxvugcelflp.supabase.co"
 ).rstrip("/")
+
 SUPABASE_BUCKET = os.environ.get("SUPABASE_BUCKET", "veiculos")
 SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 SUPABASE_STORIES_FOLDER = os.environ.get("SUPABASE_STORIES_FOLDER", "stories")
@@ -52,11 +52,14 @@ def fit_cover(im, w, h):
     r = im.resize((int(im.width*s), int(im.height*s)), Image.Resampling.LANCZOS)
     x = max(0, (r.width-w)//2)
     y = max(0, (r.height-h)//2)
-    return r.crop((x,y,x+w,y+h))
+    return r.crop((x, y, x+w, y+h))
 
 def fit_contain(im, maxw, maxh):
     s = min(maxw / im.width, maxh / im.height)
-    return im.resize((max(1,int(im.width*s)), max(1,int(im.height*s))), Image.Resampling.LANCZOS)
+    return im.resize(
+        (max(1, int(im.width*s)), max(1, int(im.height*s))),
+        Image.Resampling.LANCZOS
+    )
 
 def clean_logo(logo):
     logo = logo.convert("RGBA")
@@ -69,11 +72,11 @@ def clean_logo(logo):
     bb = logo.getbbox()
     return logo.crop(bb) if bb else logo
 
-def soft_edges(im, edge=45):
+def soft_edges(im, edge=42):
     im = im.convert("RGBA")
     mask = Image.new("L", im.size, 0)
     d = ImageDraw.Draw(mask)
-    inset = min(edge, max(22, min(im.size)//10))
+    inset = min(edge, max(20, min(im.size)//10))
     d.rounded_rectangle(
         (inset, inset, im.width-inset, im.height-inset),
         radius=max(18, inset//2),
@@ -83,22 +86,52 @@ def soft_edges(im, edge=45):
     im.putalpha(mask)
     return im
 
-def fmt_price(v):
-    s = str(v or "").strip().replace("R$","").replace(" ","")
+def normalize_payload(raw):
+    # Aceita tanto payload direto quanto { body: {...} } vindo do n8n.
+    if isinstance(raw, dict) and isinstance(raw.get("body"), dict):
+        merged = dict(raw["body"])
+        for k,v in raw.items():
+            if k != "body" and k not in merged:
+                merged[k] = v
+        return merged
+    return raw or {}
+
+def fmt_price_from_supabase(v):
+    # NÃO CHUTA PREÇO.
+    # Usa exclusivamente o valor recebido do Supabase/n8n.
+    if v is None or str(v).strip() == "":
+        raise ValueError("Campo 'preco' não recebido do Supabase.")
+
+    s = str(v).strip().replace("R$", "").replace(" ", "")
+
+    # formatos aceitos:
+    # 58990
+    # 58990.00
+    # 58.990
+    # 58.990,00
+    # 58990,00
     try:
         if "," in s:
-            n = float(s.replace(".","").replace(",","."))
+            normalized = s.replace(".", "").replace(",", ".")
+            n = float(normalized)
         else:
-            n = float(s)
-        return f"{int(round(n)):,}".replace(",",".")
-    except:
-        return s
+            # se houver ponto e exatamente 3 dígitos depois, tratamos como separador milhar.
+            if s.count(".") == 1 and len(s.split(".")[1]) == 3:
+                n = float(s.replace(".", ""))
+            else:
+                n = float(s)
+
+        return f"{int(round(n)):,}".replace(",", ".")
+    except Exception:
+        raise ValueError(f"Preço inválido recebido do Supabase: {v}")
 
 def fmt_km(v):
+    if v is None or str(v).strip() == "":
+        return ""
     try:
-        return f"{int(float(v)):,}".replace(",",".")
+        return f"{int(float(v)):,}".replace(",", ".")
     except:
-        return str(v or "")
+        return str(v)
 
 def upload_png_to_supabase(img, job):
     if not SUPABASE_SERVICE_KEY:
@@ -108,7 +141,8 @@ def upload_png_to_supabase(img, job):
     img.convert("RGB").save(bio, format="PNG", optimize=True)
 
     object_name = f"{SUPABASE_STORIES_FOLDER}/{job}.png"
-    url = f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{object_name}"
+    upload_url = f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{object_name}"
+
     headers = {
         "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
         "apikey": SUPABASE_SERVICE_KEY,
@@ -116,227 +150,248 @@ def upload_png_to_supabase(img, job):
         "x-upsert": "true",
         "cache-control": "3600"
     }
-    r = requests.post(url, headers=headers, data=bio.getvalue(), timeout=180)
-    if r.status_code not in (200,201):
-        raise RuntimeError(f"Falha upload Story HTTP {r.status_code}: {r.text[:800]}")
+
+    r = requests.post(upload_url, headers=headers, data=bio.getvalue(), timeout=180)
+
+    if r.status_code not in (200, 201):
+        raise RuntimeError(
+            f"Falha upload Story HTTP {r.status_code}: {r.text[:800]}"
+        )
 
     return f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{object_name}"
 
-# ------------ ícones simples ------------
 def icon_box(d, x, y):
-    d.rounded_rectangle((x,y,x+42,y+42), radius=8, outline=RED, width=3)
+    d.rounded_rectangle((x,y,x+46,y+46), radius=8, outline=RED, width=3)
 
-def icon_calendar(d, x, y):
-    icon_box(d,x,y)
-    d.line((x+8,y+14,x+34,y+14),fill=RED,width=2)
+def render_story(raw):
+    data = normalize_payload(raw)
 
-def icon_speed(d,x,y):
-    icon_box(d,x,y)
-    d.arc((x+8,y+9,x+34,y+35),180,355,fill=RED,width=2)
-    d.line((x+21,y+24,x+29,y+16),fill=RED,width=2)
-
-def icon_fuel(d,x,y):
-    icon_box(d,x,y)
-    d.rectangle((x+11,y+9,x+25,y+31),outline=RED,width=2)
-
-def icon_gear(d,x,y):
-    icon_box(d,x,y)
-    d.ellipse((x+14,y+14,x+28,y+28),outline=RED,width=2)
-
-def render_story(data):
     marca = str(data.get("marca","")).upper()
     modelo = str(data.get("modelo","")).upper()
     ano = str(data.get("ano_modelo") or data.get("ano") or "")
     km = fmt_km(data.get("km"))
     cambio = str(data.get("cambio","")).upper()
     combustivel = str(data.get("combustivel","")).upper()
-    preco = fmt_price(data.get("preco"))
     cor = str(data.get("cor","")).upper()
     portas = str(data.get("portas",""))
 
+    # PREÇO OBRIGATORIAMENTE DINÂMICO
+    preco = fmt_price_from_supabase(data.get("preco"))
+
     fotos = data.get("fotos") or []
     foto_capa = data.get("foto_capa")
+
     if foto_capa and foto_capa not in fotos:
         fotos = [foto_capa] + fotos
-    fotos = [x for x in fotos if x]
-    if not fotos:
-        raise ValueError("Nenhuma foto recebida.")
 
-    # fotos reais do estoque
+    fotos = [x for x in fotos if x]
+
+    if not fotos:
+        raise ValueError("Nenhuma foto recebida do Supabase.")
+
+    logo_url = data.get("logo_url") or DEFAULT_LOGO_URL
+
+    # Fotos reais do estoque
     hero = download_image(fotos[0])
-    photo_top_right = download_image(fotos[min(1, len(fotos)-1)])
+    top_right = download_image(fotos[min(1, len(fotos)-1)])
     interior = download_image(fotos[min(5, len(fotos)-1)])
     rear = download_image(fotos[min(10, len(fotos)-1)])
     side = download_image(fotos[min(3, len(fotos)-1)])
-    logo = clean_logo(download_image(data.get("logo_url") or DEFAULT_LOGO_URL))
+    logo = clean_logo(download_image(logo_url))
 
     im = Image.new("RGBA", (W,H), BLACK+(255,))
     d = ImageDraw.Draw(im)
 
     # =========================================================
-    # BLOCO 1 — HERO igual ao post aprovado
+    # BLOCO SUPERIOR — 0 a 1100
     # =========================================================
-    hero_h = 1040
-    bg = fit_cover(hero, W, hero_h).filter(ImageFilter.GaussianBlur(18))
-    bg = ImageEnhance.Brightness(bg).enhance(0.22)
-    im.alpha_composite(bg,(0,0))
+    hero_h = 1100
 
-    # sombra preta sobre fundo
-    grad = Image.new("RGBA",(W,hero_h),(0,0,0,0))
-    gd = ImageDraw.Draw(grad)
+    bg = fit_cover(hero, W, hero_h)
+    bg = bg.filter(ImageFilter.GaussianBlur(22))
+    bg = ImageEnhance.Brightness(bg).enhance(0.20)
+    im.alpha_composite(bg, (0,0))
+
+    overlay = Image.new("RGBA", (W,hero_h), (0,0,0,0))
+    od = ImageDraw.Draw(overlay)
     for y in range(hero_h):
-        a = int(120 + 80*(y/hero_h))
-        gd.line((0,y,W,y), fill=(0,0,0,a))
-    im.alpha_composite(grad,(0,0))
+        a = int(135 + (y/hero_h)*65)
+        od.line((0,y,W,y), fill=(0,0,0,a))
+    im.alpha_composite(overlay,(0,0))
     d = ImageDraw.Draw(im)
 
-    # logo topo esquerdo
-    lg = fit_contain(logo, 400, 170)
-    im.alpha_composite(lg,(32,24))
+    # logo
+    lg = fit_contain(logo, 470, 185)
+    im.alpha_composite(lg,(34,26))
 
-    # selo topo direito
-    txt(d,(1038,40),"S E M I N O V O S",20,WHITE,False,anchor="ra")
-    txt(d,(1038,70),"D E  Q U A L I D A D E",18,WHITE,False,anchor="ra")
-    d.polygon([(1010,92),(1035,92),(1024,118),(998,118)],fill=RED)
+    # selo
+    txt(d,(1038,42),"S E M I N O V O S",22,WHITE,False,anchor="ra")
+    txt(d,(1038,72),"D E  Q U A L I D A D E",19,WHITE,False,anchor="ra")
+    d.polygon([(1000,96),(1036,96),(1022,132),(986,132)], fill=RED)
 
-    # título grande
-    txt(d,(42,155),marca,42,RED,True)
-    model_size = 108 if len(modelo)<=12 else 82
-    txt(d,(40,195),modelo,model_size,WHITE,True)
+    # marca/modelo
+    txt(d,(44,180),marca,46,RED,True)
+    model_size = 118 if len(modelo) <= 12 else 90
+    txt(d,(40,220),modelo,model_size,WHITE,True)
 
-    # ano + câmbio + combustível
-    d.polygon([(40,330),(220,330),(205,398),(28,398)], fill=RED)
-    txt(d,(125,363),ano,44,WHITE,True,anchor="mm")
-    txt(d,(245,363),f"{cambio}  |  {combustivel}",38,WHITE,True,anchor="lm")
+    # ano/câmbio/flex
+    d.polygon([(38,360),(235,360),(218,438),(22,438)], fill=RED)
+    txt(d,(130,398),ano,48,WHITE,True,anchor="mm")
+    txt(d,(260,397),f"{cambio}  |  {combustivel}",40,WHITE,True,anchor="lm")
 
-    txt(d,(42,420),"ESPAÇO, CONFORTO",31,WHITE,True)
-    txt(d,(42,460),"E VERSATILIDADE",31,RED,True)
+    txt(d,(44,460),"ESPAÇO, CONFORTO",34,WHITE,True)
+    txt(d,(44,503),"E VERSATILIDADE",34,RED,True)
 
-    # foto principal enorme
-    hero_fg = fit_contain(hero, 1030, 640)
-    hero_fg = ImageEnhance.Contrast(hero_fg).enhance(1.06)
+    # hero
+    hero_fg = fit_contain(hero, 1040, 680)
+    hero_fg = ImageEnhance.Contrast(hero_fg).enhance(1.05)
     hero_fg = ImageEnhance.Brightness(hero_fg).enhance(1.03)
-    hero_fg = soft_edges(hero_fg, 36)
-    hx=(W-hero_fg.width)//2
-    hy=500
+    hero_fg = soft_edges(hero_fg, 40)
 
-    shadow = Image.new("RGBA",(hero_fg.width+80,hero_fg.height+80),(0,0,0,0))
-    sd=ImageDraw.Draw(shadow)
-    sd.rounded_rectangle((40,40,hero_fg.width+40,hero_fg.height+40),radius=35,fill=(0,0,0,130))
-    shadow=shadow.filter(ImageFilter.GaussianBlur(24))
-    im.alpha_composite(shadow,(hx-40,hy-40))
+    hx = (W - hero_fg.width)//2
+    hy = 535
+
+    shadow = Image.new("RGBA", (hero_fg.width+90, hero_fg.height+90), (0,0,0,0))
+    sd = ImageDraw.Draw(shadow)
+    sd.rounded_rectangle(
+        (45,45,hero_fg.width+45,hero_fg.height+45),
+        radius=38,
+        fill=(0,0,0,135)
+    )
+    shadow = shadow.filter(ImageFilter.GaussianBlur(26))
+    im.alpha_composite(shadow,(hx-45,hy-45))
     im.alpha_composite(hero_fg,(hx,hy))
-
-    # benefícios na base do hero
-    base_y=895
-    d.rectangle((0,base_y,W,1040),fill=(7,7,8,245))
-    d.line((0,base_y,W,base_y),fill=(100,0,0),width=2)
-
-    benefits=["CONFORTO","ESPAÇO\nINTERNO","TECNOLOGIA","SEGURANÇA"]
-    bx=[88,280,480,675]
-    for i,(lab,x) in enumerate(zip(benefits,bx)):
-        d.rounded_rectangle((x-25,920,x+25,970),radius=10,outline=RED,width=3)
-        txt(d,(x,995),lab,18,WHITE,True,anchor="ma")
-        if i<3:
-            d.line((x+85,918,x+85,1015),fill=(115,0,0),width=2)
-
-    # preço inclinado à direita
-    d.polygon([(700,880),(W,880),(W,1040),(655,1040)],fill=(4,4,5,255))
-    d.line((700,880,655,1040),fill=RED,width=8)
-    txt(d,(875,907),"POR APENAS",22,WHITE,True,anchor="ma")
-    txt(d,(720,942),"R$",38,RED,True)
-    txt(d,(790,930),preco,72,WHITE,True)
-    d.rectangle((750,995,1060,1036),fill=RED)
-    txt(d,(905,1015),"FALE CONOSCO",24,WHITE,True,anchor="mm")
+    d = ImageDraw.Draw(im)
 
     # =========================================================
-    # BLOCO 2 — DESTAQUES + FOTO
+    # BARRA BENEFÍCIOS + PREÇO — 1000 a 1195
     # =========================================================
-    sec2_y=1050
-    sec2_h=410
-    d.rectangle((0,sec2_y,W,sec2_y+sec2_h),fill=(4,4,5,255))
+    bar_y = 1010
 
-    # esquerda
-    txt(d,(35,1080),"DESTAQUES",42,WHITE,True)
-    txt(d,(35,1126),"DO VEÍCULO",42,RED,True)
+    d.rectangle((0,bar_y,W,1195), fill=(6,6,7,250))
+    d.line((0,bar_y,W,bar_y), fill=RED, width=3)
 
-    opts=data.get("opcionais") or []
-    preferred = [
-        "Motor 1.6 Flex",
-        f"Câmbio {cambio.title()}",
-        "Direção Elétrica",
-        "Ar Condicionado",
-        "Vidros e Travas Elétricas",
-        "Rodas de Liga Leve",
-        "Central Multimídia",
-        "Airbags + ABS"
-    ]
-    shown = []
-    low=[str(x).lower() for x in opts]
-    for p in preferred:
-        if not opts or any(p.lower().split()[0] in o for o in low):
-            shown.append(p)
-    shown=shown[:6]
+    benefits = ["CONFORTO","ESPAÇO","TECNOLOGIA","SEGURANÇA"]
+    bx = [85,245,410,575]
 
-    yy=1180
-    for item in shown:
-        icon_box(d,35,yy-8)
-        txt(d,(95,yy+13),item,20,WHITE,False,anchor="lm")
-        yy+=46
+    for i,(lab,cx) in enumerate(zip(benefits,bx)):
+        d.rounded_rectangle((cx-27,1045,cx+27,1099), radius=10, outline=RED, width=3)
+        txt(d,(cx,1123),lab,19,WHITE,True,anchor="ma")
+        if i < 3:
+            d.line((cx+78,1040,cx+78,1145), fill=(120,0,0), width=2)
 
-    # foto direita com diagonal vermelha
-    right_x=570
-    d.polygon([(right_x,sec2_y),(W,sec2_y),(W,sec2_y+sec2_h),(520,sec2_y+sec2_h)],fill=(12,12,14,255))
-    d.line((right_x,sec2_y,520,sec2_y+sec2_h),fill=RED,width=5)
-    top_right = fit_cover(photo_top_right, 480, 380)
-    im.alpha_composite(top_right,(595,1070))
+    # preço igual à composição aprovada
+    d.polygon([(690,990),(W,990),(W,1195),(645,1195)], fill=(4,4,5,255))
+    d.line((690,990,645,1195), fill=RED, width=8)
+
+    txt(d,(875,1018),"POR APENAS",23,WHITE,True,anchor="ma")
+    txt(d,(710,1055),"R$",42,RED,True)
+    txt(d,(780,1043),preco,78,WHITE,True)
+
+    d.rectangle((755,1135,1050,1180), fill=RED)
+    txt(d,(902,1158),"FALE CONOSCO",24,WHITE,True,anchor="mm")
+
+    # =========================================================
+    # BLOCO 2 — DESTAQUES
+    # =========================================================
+    sec2_y = 1210
+    sec2_h = 330
+
+    d.rectangle((0,sec2_y,W,sec2_y+sec2_h), fill=(4,4,5,255))
+
+    txt(d,(38,1240),"DESTAQUES",42,WHITE,True)
+    txt(d,(38,1285),"DO VEÍCULO",42,RED,True)
+
+    opts = data.get("opcionais") or []
+    if isinstance(opts, str):
+        opts = [x.strip() for x in opts.split(",") if x.strip()]
+
+    shown = [str(x) for x in opts][:5]
+
+    if not shown:
+        shown = [
+            "Ar condicionado",
+            f"Câmbio {cambio.title()}",
+            "Rodas de liga leve",
+            "Vidros elétricos",
+            "Freio ABS"
+        ]
+
+    yy = 1345
+    for item in shown[:5]:
+        icon_box(d,38,yy-8)
+        txt(d,(100,yy+15),item,20,WHITE,False,anchor="lm")
+        yy += 48
+
+    # foto destaque à direita
+    d.polygon([(610,sec2_y),(W,sec2_y),(W,sec2_y+sec2_h),(555,sec2_y+sec2_h)], fill=(10,10,12,255))
+    d.line((610,sec2_y,555,sec2_y+sec2_h), fill=RED, width=5)
+
+    rt = fit_cover(top_right, 450, 300)
+    im.alpha_composite(rt,(625,1225))
 
     # =========================================================
     # BLOCO 3 — FICHA TÉCNICA + 3 FOTOS
     # =========================================================
-    sec3_y=1470
-    sec3_h=390
-    d.rectangle((0,sec3_y,W,sec3_y+sec3_h),fill=(6,6,7,255))
+    sec3_y = 1550
+    sec3_h = 300
 
-    txt(d,(35,1500),"FICHA",40,WHITE,True)
-    txt(d,(35,1545),"TÉCNICA",40,RED,True)
+    d.rectangle((0,sec3_y,W,sec3_y+sec3_h), fill=(6,6,7,255))
 
-    specs=[
-        ("ANO/MODELO",ano,icon_calendar),
-        ("QUILOMETRAGEM",f"{km} KM",icon_speed),
-        ("COMBUSTÍVEL",combustivel,icon_fuel),
-        ("CÂMBIO",cambio,icon_gear),
-        ("COR",cor,icon_box),
-        ("PORTAS",f"{portas} PORTAS" if portas else "",icon_box)
+    txt(d,(38,1580),"FICHA",40,WHITE,True)
+    txt(d,(38,1623),"TÉCNICA",40,RED,True)
+
+    specs = [
+        ("ANO/MODELO", ano),
+        ("QUILOMETRAGEM", f"{km} KM" if km else ""),
+        ("COMBUSTÍVEL", combustivel),
+        ("CÂMBIO", cambio),
+        ("COR", cor),
+        ("PORTAS", f"{portas} PORTAS" if portas else "")
     ]
 
-    sy=1600
-    for k,v,ico in specs:
-        if not v:
+    sy = 1670
+    for key,val in specs:
+        if not val:
             continue
-        ico(d,35,sy-8)
-        txt(d,(92,sy),k,14,GRAY,True)
-        txt(d,(92,sy+20),v,21,WHITE,True)
-        sy+=52
+        txt(d,(38,sy),key,14,GRAY,True)
+        txt(d,(175,sy),val,21,WHITE,True)
+        sy += 36
 
-    # 3 fotos à direita empilhadas
-    ph_x=560
-    ph_w=500
-    ph_h=112
-    p1=fit_cover(interior,ph_w,ph_h)
-    p2=fit_cover(rear,ph_w,ph_h)
-    p3=fit_cover(side,ph_w,ph_h)
-    im.alpha_composite(p1,(ph_x,1490))
-    im.alpha_composite(p2,(ph_x,1610))
-    im.alpha_composite(p3,(ph_x,1730))
-    d.line((540,1470,490,1860),fill=RED,width=5)
+    # 3 fotos grandes à direita
+    ph_x = 585
+    ph_w = 470
+    ph_h = 88
+
+    for idx,src in enumerate([interior,rear,side]):
+        ph = fit_cover(src,ph_w,ph_h)
+        im.alpha_composite(ph,(ph_x,1565 + idx*94))
+
+    d.line((560,1550,520,1850), fill=RED, width=5)
 
     # =========================================================
     # RODAPÉ
     # =========================================================
-    d.rectangle((0,1860,W,H),fill=(0,0,0,255))
-    txt(d,(35,1890),data.get("whatsapp","(51) 99573-4555"),22,WHITE,True)
-    txt(d,(1045,1890),data.get("instagram","@premiumautomarcas"),22,WHITE,True,anchor="ra")
+    d.rectangle((0,1850,W,H), fill=(0,0,0,255))
+
+    txt(
+        d,
+        (35,1882),
+        data.get("whatsapp","(51) 99573-4555"),
+        22,
+        WHITE,
+        True
+    )
+
+    txt(
+        d,
+        (1045,1882),
+        data.get("instagram","@premiumautomarcas"),
+        22,
+        WHITE,
+        True,
+        anchor="ra"
+    )
 
     return im
 
@@ -355,18 +410,28 @@ def story_health():
 @story_bp.post("/story")
 def story():
     try:
-        data=request.get_json(force=True)
-        img=render_story(data)
-        job=uuid.uuid4().hex
-        public_url=upload_png_to_supabase(img,job)
+        data = request.get_json(force=True)
+
+        img = render_story(data)
+
+        job = uuid.uuid4().hex
+
+        public_url = upload_png_to_supabase(img, job)
+
         return jsonify({
             "status":"done",
             "id":job,
             "url":public_url,
             "story_url":public_url,
-            "template":"story_aprovado_v1"
+            "template":"story_aprovado_v2",
+            "source_price": normalize_payload(data).get("preco")
         })
+
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({"status":"error","error":str(e)}),500
+
+        return jsonify({
+            "status":"error",
+            "error":str(e)
+        }),500
