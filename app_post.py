@@ -1,3 +1,4 @@
+
 from flask import Blueprint, request, jsonify
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
 from pathlib import Path
@@ -6,6 +7,7 @@ import requests, uuid, os, io
 post_bp = Blueprint("post_bp", __name__)
 BASE = Path(__file__).parent
 TEMPLATE_PATH = BASE / "post_template.png"
+
 W, H = 1536, 1024
 RED=(235,25,34); WHITE=(248,248,248); BLACK=(4,4,5); GRAY=(175,175,175)
 
@@ -13,45 +15,47 @@ FONT_BOLD = next((p for p in [
     "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 ] if os.path.exists(p)), None)
-FONT_REG = next((p for p in ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"] if os.path.exists(p)), None)
+FONT_REG = next((p for p in [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+] if os.path.exists(p)), None)
 
-SUPABASE_URL=os.environ.get("SUPABASE_URL","https://kbmryoeevdxvugcelflp.supabase.co").rstrip("/")
+SUPABASE_URL=os.environ.get(
+    "SUPABASE_URL",
+    "https://kbmryoeevdxvugcelflp.supabase.co"
+).rstrip("/")
 SUPABASE_BUCKET=os.environ.get("SUPABASE_BUCKET","veiculos")
 SUPABASE_SERVICE_KEY=os.environ.get("SUPABASE_SERVICE_KEY","")
 SUPABASE_POSTS_FOLDER=os.environ.get("SUPABASE_POSTS_FOLDER","posts")
-
 
 def F(size,bold=False):
     p=FONT_BOLD if bold else FONT_REG
     return ImageFont.truetype(p,size) if p else ImageFont.load_default()
 
-
 def normalize(raw):
     if isinstance(raw,dict) and isinstance(raw.get("body"),dict):
         d=dict(raw["body"])
         for k,v in raw.items():
-            if k!="body" and k not in d: d[k]=v
+            if k!="body" and k not in d:
+                d[k]=v
         return d
     return raw or {}
-
 
 def dl(url):
     r=requests.get(url,timeout=40,headers={"User-Agent":"Mozilla/5.0"})
     r.raise_for_status()
     return Image.open(io.BytesIO(r.content)).convert("RGBA")
 
-
-def cover(im,w,h):
+def cover(im,w,h,focus_y=.5):
     s=max(w/im.width,h/im.height)
     r=im.resize((int(im.width*s),int(im.height*s)),Image.Resampling.LANCZOS)
-    x=max(0,(r.width-w)//2); y=max(0,(r.height-h)//2)
+    x=max(0,(r.width-w)//2)
+    max_y=max(0,r.height-h)
+    y=int(max_y*focus_y)
     return r.crop((x,y,x+w,y+h))
 
-
-def contain(im,mw,mh):
+def fit(im,mw,mh):
     s=min(mw/im.width,mh/im.height)
     return im.resize((max(1,int(im.width*s)),max(1,int(im.height*s))),Image.Resampling.LANCZOS)
-
 
 def fmt_price(v):
     if v is None or str(v).strip()=="":
@@ -65,34 +69,30 @@ def fmt_price(v):
         n=float(s)
     return f"{int(round(n)):,}".replace(",",".")
 
-
 def fmt_km(v):
-    if v is None or str(v).strip()=="": return ""
-    try: return f"{int(float(v)):,}".replace(",",".")
-    except: return str(v)
+    if v is None or str(v).strip()=="":
+        return ""
+    try:
+        return f"{int(float(v)):,}".replace(",",".")
+    except:
+        return str(v)
 
+def put_text(d,xy,value,size,fill=WHITE,bold=True,anchor=None):
+    d.text(xy,str(value),font=F(size,bold),fill=fill,anchor=anchor)
 
-def text(draw,xy,value,size,fill=WHITE,bold=True,anchor=None):
-    draw.text(xy,str(value),font=F(size,bold),fill=fill,anchor=anchor)
+def erase(im,box,fill=(5,5,6,255)):
+    ImageDraw.Draw(im).rectangle(box,fill=fill)
 
-
-def dark_box(im,box,alpha=235):
-    ov=Image.new("RGBA",im.size,(0,0,0,0)); d=ImageDraw.Draw(ov)
-    d.rectangle(box,fill=(0,0,0,alpha))
-    im.alpha_composite(ov)
-
-
-def paste_photo(im,photo,box,brightness=1.0):
-    x1,y1,x2,y2=box; w=x2-x1; h=y2-y1
-    p=cover(photo,w,h)
-    if brightness!=1.0: p=ImageEnhance.Brightness(p).enhance(brightness)
+def paste_photo(im,photo,box,focus_y=.5):
+    x1,y1,x2,y2=box
+    p=cover(photo,x2-x1,y2-y1,focus_y)
     im.alpha_composite(p,(x1,y1))
-
 
 def upload(img,job):
     if not SUPABASE_SERVICE_KEY:
         raise RuntimeError("SUPABASE_SERVICE_KEY não configurada no Render.")
-    bio=io.BytesIO(); img.convert("RGB").save(bio,format="PNG",optimize=True)
+    bio=io.BytesIO()
+    img.convert("RGB").save(bio,format="PNG",optimize=True)
     name=f"{SUPABASE_POSTS_FOLDER}/{job}.png"
     url=f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{name}"
     headers={
@@ -107,9 +107,9 @@ def upload(img,job):
         raise RuntimeError(f"Falha upload Post HTTP {r.status_code}: {r.text[:800]}")
     return f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{name}"
 
-
 def render_post(raw):
     data=normalize(raw)
+
     marca=str(data.get("marca","")).upper()
     modelo=str(data.get("modelo","")).upper()
     ano=str(data.get("ano_modelo") or data.get("ano") or "")
@@ -122,9 +122,11 @@ def render_post(raw):
 
     fotos=data.get("fotos") or []
     capa=data.get("foto_capa")
-    if capa and capa not in fotos: fotos=[capa]+fotos
+    if capa and capa not in fotos:
+        fotos=[capa]+fotos
     fotos=[x for x in fotos if x]
-    if not fotos: raise ValueError("Nenhuma foto recebida do Supabase.")
+    if not fotos:
+        raise ValueError("Nenhuma foto recebida do Supabase.")
 
     hero=dl(fotos[0])
     interior=dl(fotos[min(5,len(fotos)-1)])
@@ -133,101 +135,185 @@ def render_post(raw):
 
     if not TEMPLATE_PATH.exists():
         raise RuntimeError("post_template.png não encontrado no repositório.")
+
     im=Image.open(TEMPLATE_PATH).convert("RGBA")
-    if im.size!=(W,H): im=im.resize((W,H),Image.Resampling.LANCZOS)
+    if im.size!=(W,H):
+        im=im.resize((W,H),Image.Resampling.LANCZOS)
 
-    # 1) FOTOS: substitui somente os slots do modelo aprovado.
-    # Hero esquerdo: fundo real + foto inteira por cima.
-    hero_bg=cover(hero,940,690).filter(ImageFilter.GaussianBlur(10))
-    hero_bg=ImageEnhance.Brightness(hero_bg).enhance(.72)
-    im.alpha_composite(hero_bg,(0,205))
-    hero_fg=contain(hero,910,600)
-    hero_fg=ImageEnhance.Contrast(hero_fg).enhance(1.05)
-    hx=(940-hero_fg.width)//2
-    im.alpha_composite(hero_fg,(hx,330))
+    # =========================================================
+    # FOTOS — usa exatamente os espaços visuais do modelo aprovado
+    # =========================================================
 
-    # Slots direitos respeitando a geometria do card aprovado.
-    paste_photo(im,interior,(1220,0,1536,337),1.00)
-    paste_photo(im,traseira,(1085,338,1536,610),1.00)
-    paste_photo(im,lateral,(1120,696,1536,950),1.00)
+    # Foto principal: ocupa a mesma grande área da esquerda.
+    # Primeiro um fundo da própria foto, depois uma leve sombra nas bordas.
+    hero_box=(0,278,940,888)
+    hero_img=cover(hero,940,610,.48)
+    hero_img=ImageEnhance.Contrast(hero_img).enhance(1.03)
+    hero_img=ImageEnhance.Brightness(hero_img).enhance(.96)
+
+    vignette=Image.new("RGBA",(940,610),(0,0,0,0))
+    vd=ImageDraw.Draw(vignette)
+    for i in range(65):
+        a=int(95*(1-i/65)**1.7)
+        vd.rectangle((i,i,939-i,609-i),outline=(0,0,0,a),width=2)
+    hero_img=Image.alpha_composite(hero_img,vignette)
+    im.alpha_composite(hero_img,(0,278))
+
+    # Fotos da coluna direita nas mesmas faixas do card.
+    paste_photo(im,interior,(1220,0,1536,335),.50)
+    paste_photo(im,traseira,(1088,338,1536,610),.50)
+    paste_photo(im,lateral,(1088,706,1536,949),.52)
+
+    # Redesenha as linhas vermelhas separadoras que ficam por cima das fotos.
+    d=ImageDraw.Draw(im)
+    d.line((1225,0,1127,335),fill=RED,width=5)
+    d.line((1146,338,1060,610),fill=RED,width=5)
+    d.line((1155,610,1060,949),fill=RED,width=5)
+
+    # =========================================================
+    # CABEÇALHO — apaga só os textos antigos, sem criar um painel gigante
+    # =========================================================
+    erase(im,(42,136,380,176),(4,4,5,245))    # CITROEN antigo
+    erase(im,(38,178,720,322),(4,4,5,245))    # modelo antigo
+    erase(im,(28,328,210,391),(4,4,5,245))    # ano antigo
+    erase(im,(225,333,555,388),(4,4,5,245))   # manual/flex
+    erase(im,(40,398,315,472),(4,4,5,225))    # slogan
 
     d=ImageDraw.Draw(im)
-
-    # 2) TÍTULOS ESQUERDOS: máscara local e reescrita dinâmica.
-    dark_box(im,(20,128,900,466),205); d=ImageDraw.Draw(im)
-    # letras espaçadas da marca
     marca_spaced=" ".join(list(marca)) if len(marca)<=10 else marca
-    text(d,(55,140),marca_spaced,38,RED,True)
-    msize=118 if len(modelo)<=12 else 88
-    text(d,(42,175),modelo,msize,WHITE,True)
+    put_text(d,(58,140),marca_spaced,36,RED,True)
 
-    # ano e mecânica no mesmo alinhamento do aprovado
-    d.polygon([(38,330),(205,330),(190,387),(25,387)],fill=RED)
-    text(d,(112,360),ano,42,WHITE,True,anchor="mm")
-    dark_box(im,(220,326,600,390),220); d=ImageDraw.Draw(im)
-    text(d,(235,360),f"{cambio}  /  {combustivel}",33,WHITE,True,anchor="lm")
-    text(d,(45,407),"ESPAÇO, CONFORTO",27,WHITE,True)
-    text(d,(45,442),"E VERSATILIDADE",27,RED,True)
+    # tamanho próximo ao card original; não extrapola o bloco.
+    msize=112 if len(modelo)<=10 else 98 if len(modelo)<=13 else 78
+    put_text(d,(42,177),modelo,msize,WHITE,True)
 
-    # 3) PREÇO: preserva moldura/diagonal/botão do template; troca só valor.
-    dark_box(im,(635,812,928,938),242); d=ImageDraw.Draw(im)
-    text(d,(760,827),"POR APENAS",21,WHITE,True,anchor="ma")
-    text(d,(642,870),"R$",40,RED,True)
-    psize=72 if len(preco)<=6 else 62
-    text(d,(700,850),preco,psize,WHITE,True)
-    # botão
-    d.rectangle((640,940,920,992),fill=RED)
-    text(d,(780,966),"FALE CONOSCO",25,WHITE,True,anchor="mm")
+    # caixa de ano no mesmo formato do original
+    d.polygon([(34,331),(210,331),(197,389),(22,389)],fill=RED)
+    put_text(d,(112,360),ano,42,WHITE,True,anchor="mm")
 
-    # 4) DESTAQUES: mantém título e ícones do template, substitui textos.
-    # Apaga só as frases ao lado dos ícones.
-    dark_box(im,(1022,94,1215,411),245); d=ImageDraw.Draw(im)
+    put_text(d,(236,360),f"{cambio}  /  {combustivel}",31,WHITE,True,anchor="lm")
+    put_text(d,(45,405),"ESPAÇO, CONFORTO",27,WHITE,True)
+    put_text(d,(45,441),"E VERSATILIDADE",27,RED,True)
+
+    # =========================================================
+    # PREÇO — troca somente os números, preservando o design do template
+    # =========================================================
+    erase(im,(650,824,915,930),(5,5,6,250))
+    d=ImageDraw.Draw(im)
+
+    # "POR APENAS" permanece praticamente no mesmo lugar.
+    put_text(d,(785,834),"POR APENAS",20,WHITE,True,anchor="ma")
+    put_text(d,(650,874),"R$",39,RED,True)
+
+    psize=70 if len(preco)<=6 else 60
+    put_text(d,(712,852),preco,psize,WHITE,True)
+
+    # =========================================================
+    # DESTAQUES — preserva título e ícones; muda só a descrição
+    # =========================================================
     opts=data.get("opcionais") or []
-    if isinstance(opts,str): opts=[x.strip() for x in opts.split(",") if x.strip()]
+    if isinstance(opts,str):
+        opts=[x.strip() for x in opts.split(",") if x.strip()]
+
     shown=[str(x) for x in opts][:8]
     if not shown:
-        shown=["Motor 1.6 Flex",f"Câmbio {cambio.title()}","Direção Elétrica","Ar Condicionado","Vidros e Travas Elétricas","Rodas de Liga Leve","Central Multimídia","Airbags + ABS"]
+        shown=[
+            "Motor 1.6 Flex",
+            f"Câmbio {cambio.title()}",
+            "Direção Elétrica",
+            "Ar Condicionado",
+            "Vidros e Travas Elétricas",
+            "Rodas de Liga Leve",
+            "Central Multimídia",
+            "Airbags + ABS"
+        ]
+
+    # cobre só a coluna de frases, nunca os ícones/título
+    erase(im,(1021,100,1158,412),(5,5,6,248))
+    d=ImageDraw.Draw(im)
     ys=[116,156,196,236,276,316,356,396]
     for item,y in zip(shown,ys):
-        # reduz fonte automaticamente para caber na coluna estreita
-        sz=16 if len(item)<=22 else 13
-        text(d,(1025,y),item,sz,WHITE,False)
+        sz=15 if len(item)<=20 else 13
+        put_text(d,(1028,y),item,sz,WHITE,False)
 
-    # 5) FICHA: mantém rótulos/ícones, substitui apenas valores.
-    dark_box(im,(1010,688,1120,940),242); d=ImageDraw.Draw(im)
-    vals=[ano,f"{km} KM" if km else "",combustivel,cambio,cor,f"{portas} PORTAS" if portas else ""]
-    ys=[715,755,795,835,875,915]
+    # =========================================================
+    # FICHA TÉCNICA — preserva rótulos e ícones; troca os valores
+    # =========================================================
+    # pequenas máscaras em cada valor
+    value_boxes=[
+        (1010,700,1080,727),
+        (1010,740,1095,767),
+        (1010,780,1085,807),
+        (1010,820,1085,847),
+        (1010,860,1085,887),
+        (1010,900,1105,932),
+    ]
+    vals=[
+        ano,
+        f"{km} KM" if km else "",
+        combustivel,
+        cambio,
+        cor,
+        f"{portas} PORTAS" if portas else ""
+    ]
+
+    for box in value_boxes:
+        erase(im,box,(5,5,6,250))
+
+    d=ImageDraw.Draw(im)
+    ys=[707,747,787,827,867,907]
     for val,y in zip(vals,ys):
-        if val: text(d,(1015,y),val,18,WHITE,True)
+        if val:
+            put_text(d,(1012,y),val,17,WHITE,True)
 
-    # 6) CONTATO: permite valor do payload, mas mantém posição do modelo.
+    # =========================================================
+    # CONTATO — troca apenas se payload enviar; mantém estrutura original
+    # =========================================================
     whatsapp=str(data.get("whatsapp") or "(51) 99575-1376")
     instagram=str(data.get("instagram") or "@premiumautomarcas")
-    dark_box(im,(988,956,1536,1024),245); d=ImageDraw.Draw(im)
-    text(d,(1020,986),whatsapp,20,WHITE,True)
-    text(d,(1515,986),instagram.upper(),18,WHITE,True,anchor="ra")
+
+    erase(im,(1005,957,1225,1020),(0,0,0,250))
+    erase(im,(1260,957,1535,1020),(0,0,0,250))
+    d=ImageDraw.Draw(im)
+    put_text(d,(1025,980),whatsapp,18,WHITE,True)
+    put_text(d,(1510,980),instagram.upper(),17,WHITE,True,anchor="ra")
 
     return im
-
 
 @post_bp.get("/post-health")
 def post_health():
     return {
         "ok":True,
         "service":"premium-post-renderer",
-        "template":"approved-reference",
+        "template":"approved-reference-v2",
         "size":"1536x1024",
         "template_found":TEMPLATE_PATH.exists(),
-        "supabase":{"configured":bool(SUPABASE_SERVICE_KEY),"bucket":SUPABASE_BUCKET,"folder":SUPABASE_POSTS_FOLDER}
+        "supabase":{
+            "configured":bool(SUPABASE_SERVICE_KEY),
+            "bucket":SUPABASE_BUCKET,
+            "folder":SUPABASE_POSTS_FOLDER
+        }
     }
-
 
 @post_bp.post("/post")
 def post():
     try:
-        raw=request.get_json(force=True); data=normalize(raw)
-        img=render_post(data); job=uuid.uuid4().hex; url=upload(img,job)
-        return jsonify({"status":"done","id":job,"url":url,"post_url":url,"template":"post_aprovado_fiel","source_price":data.get("preco")})
+        raw=request.get_json(force=True)
+        data=normalize(raw)
+        img=render_post(data)
+        job=uuid.uuid4().hex
+        url=upload(img,job)
+
+        return jsonify({
+            "status":"done",
+            "id":job,
+            "url":url,
+            "post_url":url,
+            "template":"post_aprovado_fiel_v2",
+            "source_price":data.get("preco")
+        })
+
     except Exception as e:
-        import traceback; traceback.print_exc()
+        import traceback
+        traceback.print_exc()
         return jsonify({"status":"error","error":str(e)}),500
