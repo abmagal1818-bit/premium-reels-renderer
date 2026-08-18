@@ -1,0 +1,33 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;width:1536px;height:1024px;overflow:hidden;background:#050506}*{box-sizing:border-box}body{font-family:"DejaVu Sans Condensed","Arial Narrow",Arial,sans-serif;color:#fff}
+#c{position:relative;width:1536px;height:1024px;background:#050506}
+.p{position:absolute;overflow:hidden}.p img{width:100%;height:100%;object-fit:cover}
+.hero{left:0;top:280px;width:938px;height:620px;background:#111}.hero img{object-fit:contain;position:relative;z-index:2}.hero:before{content:"";position:absolute;inset:-20px;background:var(--hero-bg) center/cover;filter:blur(18px) brightness(.55)}.hero:after{content:"";position:absolute;inset:0;z-index:3;box-shadow:inset 0 0 95px 34px rgba(0,0,0,.85)}
+.interior{left:1210px;top:0;width:326px;height:335px;clip-path:polygon(29% 0,100% 0,100% 100%,0 100%)}.rear{left:1060px;top:338px;width:476px;height:272px;clip-path:polygon(19% 0,100% 0,100% 100%,0 100%)}.side{left:1060px;top:610px;width:476px;height:340px;clip-path:polygon(20% 0,100% 0,100% 100%,0 100%)}
+.leftShade{position:absolute;left:0;top:0;width:938px;height:500px;background:linear-gradient(#050506 10%,rgba(5,5,6,.96) 45%,rgba(5,5,6,.2))}
+.logo{position:absolute;left:24px;top:20px;width:390px;height:110px;background:url("post_reference.png") 0 0/1536px 1024px no-repeat}
+.seal{position:absolute;left:650px;top:10px;width:260px;height:100px;background:url("post_reference.png") -650px -10px/1536px 1024px no-repeat}
+.t{position:absolute;left:40px;top:140px;width:700px}.marca{color:#eb1922;font-size:36px;font-weight:900;letter-spacing:12px}.modelo{font-size:112px;line-height:.95;font-weight:900;letter-spacing:-4px}
+.spec{display:flex;gap:24px;align-items:center;margin-top:13px}.ano{background:#eb1922;transform:skewX(-12deg);padding:5px 24px;font-size:42px;font-weight:900}.ano span{display:block;transform:skewX(12deg)}.drive{font-size:31px;font-weight:900}.drive b{color:#eb1922;margin:0 8px}.slogan{font-size:27px;font-weight:900;margin-top:13px}.red{color:#eb1922}
+.price{position:absolute;left:615px;top:806px;width:323px;height:218px;background:#050506;clip-path:polygon(23% 0,100% 0,100% 100%,0 100%);padding:16px 14px 10px 65px}.price:before{content:"";position:absolute;left:29px;top:-10px;width:8px;height:250px;background:#eb1922;transform:rotate(18deg)}.por{text-align:center;font-size:20px;font-weight:900}.money{display:flex;align-items:flex-end;white-space:nowrap}.rs{color:#eb1922;font-size:39px;font-weight:900;margin-right:9px;margin-bottom:7px}.valor{font-size:70px;font-weight:900;line-height:1}.cta{position:absolute;left:53px;right:12px;bottom:14px;background:#eb1922;text-align:center;padding:8px;font-size:22px;font-weight:900}
+.rightbg{position:absolute;left:938px;top:0;width:598px;height:1024px;background:#050506}.heading1,.heading2{position:absolute;left:965px;font-size:34px;font-weight:900;line-height:1}.heading1{top:28px}.heading2{top:625px}.heading1 b,.heading2 b{color:#eb1922}
+.opts{position:absolute;left:1018px;top:105px;width:180px;font-family:Arial,sans-serif}.opt{height:40px;font-size:13px;display:flex;align-items:center}.tech{position:absolute;left:1015px;top:690px;width:130px;font-family:Arial,sans-serif}.row{height:40px}.lab{font-size:10px;color:#aaa}.val{font-size:16px;font-weight:900}.contact{position:absolute;top:974px;font-size:17px;font-weight:900}.wl{left:1015px}.ig{right:25px}
+.line{position:absolute;background:#eb1922;width:5px;transform-origin:top left}.l1{left:1225px;top:0;height:350px;transform:rotate(16.5deg)}.l2{left:1148px;top:338px;height:286px;transform:rotate(17.7deg)}.l3{left:1155px;top:610px;height:355px;transform:rotate(15.2deg)}
+</style></head><body><div id="c">
+<div class="rightbg"></div><div class="p hero" id="hb"><img id="hero"></div><div class="p interior"><img id="interior"></div><div class="p rear"><img id="rear"></div><div class="p side"><img id="side"></div>
+<div class="leftShade"></div><div class="logo"></div><div class="seal"></div>
+<div class="t"><div class="marca" id="marca"></div><div class="modelo" id="modelo"></div><div class="spec"><div class="ano"><span id="ano"></span></div><div class="drive"><span id="cambio"></span><b>/</b><span id="comb"></span></div></div><div class="slogan">ESPAÇO, CONFORTO<br>E <span class="red">VERSATILIDADE</span></div></div>
+<div class="price"><div class="por">POR APENAS</div><div class="money"><span class="rs">R$</span><span class="valor" id="preco"></span></div><div class="cta">FALE CONOSCO</div></div>
+<div class="heading1">DESTAQUES<br><b>DO VEÍCULO</b></div><div class="opts" id="opts"></div>
+<div class="heading2">FICHA<br><b>TÉCNICA</b></div><div class="tech" id="tech"></div>
+<div class="contact wl" id="whats"></div><div class="contact ig" id="insta"></div>
+<div class="line l1"></div><div class="line l2"></div><div class="line l3"></div>
+</div><script>
+const d=__DATA_JSON__, $=x=>document.getElementById(x);
+$("marca").textContent=d.marca.split("").join(" ");$("modelo").textContent=d.modelo;$("ano").textContent=d.ano;$("cambio").textContent=d.cambio;$("comb").textContent=d.combustivel;$("preco").textContent=d.preco;
+$("hero").src=d.hero;$("hb").style.setProperty("--hero-bg",`url("${d.hero}")`);$("interior").src=d.interior;$("rear").src=d.rear;$("side").src=d.side;
+$("opts").innerHTML=d.opcionais.map(x=>`<div class="opt">${x}</div>`).join("");
+const rows=[["ANO/MODELO",d.ano],["QUILOMETRAGEM",d.km?d.km+" KM":""],["COMBUSTÍVEL",d.combustivel],["CÂMBIO",d.cambio],["COR",d.cor],["PORTAS",d.portas?d.portas+" PORTAS":""]];
+$("tech").innerHTML=rows.map(r=>`<div class="row"><div class="lab">${r[0]}</div><div class="val">${r[1]}</div></div>`).join("");
+$("whats").textContent=d.whatsapp;$("insta").textContent=d.instagram.toUpperCase();
+</script></body></html>
