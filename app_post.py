@@ -1,41 +1,42 @@
 from flask import Blueprint, request, jsonify
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
+from pathlib import Path
 import requests, uuid, os, io
 
 post_bp = Blueprint("post_bp", __name__)
 
+BASE = Path(__file__).parent
+TEMPLATE_PATH = BASE / "post_template.png"
+
 W, H = 1536, 1024
-LEFT_W = 938
-RIGHT_X = LEFT_W
+RED = (235,25,34)
+WHITE = (248,248,248)
+BLACK = (4,4,5)
+GRAY = (175,175,175)
 
-RED=(235,25,34)
-WHITE=(248,248,248)
-BLACK=(3,3,4)
-GRAY=(175,175,175)
-
-FONT_COND = next((p for p in [
+FONT_BOLD = next((p for p in [
     "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 ] if os.path.exists(p)), None)
+
 FONT_REG = next((p for p in [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 ] if os.path.exists(p)), None)
 
-SUPABASE_URL=os.environ.get("SUPABASE_URL","https://kbmryoeevdxvugcelflp.supabase.co").rstrip("/")
-SUPABASE_BUCKET=os.environ.get("SUPABASE_BUCKET","veiculos")
-SUPABASE_SERVICE_KEY=os.environ.get("SUPABASE_SERVICE_KEY","")
-SUPABASE_POSTS_FOLDER=os.environ.get("SUPABASE_POSTS_FOLDER","posts")
-DEFAULT_LOGO_URL=os.environ.get(
-    "PREMIUM_LOGO_URL",
-    "https://kbmryoeevdxvugcelflp.supabase.co/storage/v1/object/public/veiculos/Musicas/Logo%20minimalista%20de%20carro%20esportivo.png"
-)
+SUPABASE_URL = os.environ.get(
+    "SUPABASE_URL",
+    "https://kbmryoeevdxvugcelflp.supabase.co"
+).rstrip("/")
+SUPABASE_BUCKET = os.environ.get("SUPABASE_BUCKET","veiculos")
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY","")
+SUPABASE_POSTS_FOLDER = os.environ.get("SUPABASE_POSTS_FOLDER","posts")
 
-def F(size,bold=True):
-    p = FONT_COND if bold else FONT_REG
+def F(size,bold=False):
+    p = FONT_BOLD if bold else FONT_REG
     return ImageFont.truetype(p,size) if p else ImageFont.load_default()
 
-def txt(d,xy,val,size,fill=WHITE,bold=True,anchor=None):
-    d.text(xy,str(val),font=F(size,bold),fill=fill,anchor=anchor)
+def txt(d,xy,value,size,fill=WHITE,bold=False,anchor=None):
+    d.text(xy,str(value),font=F(size,bold),fill=fill,anchor=anchor)
 
 def normalize(raw):
     if isinstance(raw,dict) and isinstance(raw.get("body"),dict):
@@ -51,27 +52,19 @@ def dl(url):
     r.raise_for_status()
     return Image.open(io.BytesIO(r.content)).convert("RGBA")
 
-def fit_cover(im,w,h,focus_x=.5,focus_y=.5):
+def fit_cover(im,w,h,fx=.5,fy=.5):
     s=max(w/im.width,h/im.height)
     r=im.resize((int(im.width*s),int(im.height*s)),Image.Resampling.LANCZOS)
-    max_x=max(0,r.width-w); max_y=max(0,r.height-h)
-    x=int(max_x*focus_x); y=int(max_y*focus_y)
+    mx=max(0,r.width-w); my=max(0,r.height-h)
+    x=int(mx*fx); y=int(my*fy)
     return r.crop((x,y,x+w,y+h))
 
 def fit_contain(im,mw,mh):
     s=min(mw/im.width,mh/im.height)
-    return im.resize((max(1,int(im.width*s)),max(1,int(im.height*s))),Image.Resampling.LANCZOS)
-
-def clean_logo(logo):
-    logo=logo.convert("RGBA")
-    px=logo.load()
-    for y in range(logo.height):
-        for x in range(logo.width):
-            r,g,b,a=px[x,y]
-            if max(r,g,b)<18:
-                px[x,y]=(r,g,b,0)
-    bb=logo.getbbox()
-    return logo.crop(bb) if bb else logo
+    return im.resize(
+        (max(1,int(im.width*s)),max(1,int(im.height*s))),
+        Image.Resampling.LANCZOS
+    )
 
 def fmt_price(v):
     if v is None or str(v).strip()=="":
@@ -96,10 +89,13 @@ def fmt_km(v):
 def upload(img,job):
     if not SUPABASE_SERVICE_KEY:
         raise RuntimeError("SUPABASE_SERVICE_KEY não configurada no Render.")
+
     bio=io.BytesIO()
     img.convert("RGB").save(bio,format="PNG",optimize=True)
+
     name=f"{SUPABASE_POSTS_FOLDER}/{job}.png"
-    url=f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{name}"
+    upload_url=f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{name}"
+
     headers={
         "Authorization":f"Bearer {SUPABASE_SERVICE_KEY}",
         "apikey":SUPABASE_SERVICE_KEY,
@@ -107,39 +103,30 @@ def upload(img,job):
         "x-upsert":"true",
         "cache-control":"3600"
     }
-    r=requests.post(url,headers=headers,data=bio.getvalue(),timeout=180)
+
+    r=requests.post(upload_url,headers=headers,data=bio.getvalue(),timeout=180)
     if r.status_code not in (200,201):
         raise RuntimeError(f"Falha upload Post HTTP {r.status_code}: {r.text[:800]}")
+
     return f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{name}"
 
-def draw_icon(d,x,y,kind):
-    # 34x34 outline icon inside a small red square — same visual weight as approved reference.
-    d.rounded_rectangle((x,y,x+34,y+34),radius=6,outline=RED,width=2)
-    if kind=="calendar":
-        d.line((x+7,y+11,x+27,y+11),fill=RED,width=2)
-        d.line((x+10,y+6,x+10,y+13),fill=RED,width=2)
-        d.line((x+24,y+6,x+24,y+13),fill=RED,width=2)
-    elif kind=="speed":
-        d.arc((x+7,y+8,x+27,y+28),180,355,fill=RED,width=2)
-        d.line((x+17,y+20,x+24,y+13),fill=RED,width=2)
-    elif kind=="fuel":
-        d.rectangle((x+9,y+8,x+21,y+27),outline=RED,width=2)
-        d.line((x+21,y+12,x+27,y+17),fill=RED,width=2)
-    elif kind=="gear":
-        d.ellipse((x+10,y+10,x+24,y+24),outline=RED,width=2)
-    elif kind=="color":
-        d.arc((x+8,y+8,x+26,y+26),20,330,fill=RED,width=2)
-    elif kind=="door":
-        d.rectangle((x+10,y+7,x+24,y+27),outline=RED,width=2)
+def dark_patch(im,box,alpha=245):
+    x1,y1,x2,y2=box
+    patch=Image.new("RGBA",(x2-x1,y2-y1),(4,4,5,alpha))
+    im.alpha_composite(patch,(x1,y1))
 
-def vignette_overlay(size, strength=120, edge=95):
-    w,h=size
-    ov=Image.new("RGBA",(w,h),(0,0,0,0))
-    d=ImageDraw.Draw(ov)
+def image_with_dark_edges(photo,w,h,fx=.5,fy=.5):
+    p=fit_cover(photo,w,h,fx,fy)
+    p=ImageEnhance.Contrast(p).enhance(1.03)
+    p=ImageEnhance.Brightness(p).enhance(.96)
+
+    shade=Image.new("RGBA",(w,h),(0,0,0,0))
+    sd=ImageDraw.Draw(shade)
+    edge=55
     for i in range(edge):
-        a=int(strength*(1-i/edge)**1.7)
-        d.rectangle((i,i,w-1-i,h-1-i),outline=(0,0,0,a),width=2)
-    return ov
+        a=int(95*(1-i/edge)**1.6)
+        sd.rectangle((i,i,w-1-i,h-1-i),outline=(0,0,0,a),width=2)
+    return Image.alpha_composite(p,shade)
 
 def render_post(raw):
     data=normalize(raw)
@@ -166,100 +153,128 @@ def render_post(raw):
     interior=dl(fotos[min(5,len(fotos)-1)])
     traseira=dl(fotos[min(10,len(fotos)-1)])
     lateral=dl(fotos[min(3,len(fotos)-1)])
-    logo=clean_logo(dl(data.get("logo_url") or DEFAULT_LOGO_URL))
 
-    # =========================================================
-    # CANVAS / FOTO PRINCIPAL
-    # =========================================================
-    canvas=Image.new("RGBA",(W,H),BLACK+(255,))
+    if not TEMPLATE_PATH.exists():
+        raise RuntimeError("post_template.png não encontrado.")
 
-    # A referência aprovada usa a foto principal como fundo de toda a área esquerda.
-    hero_bg=fit_cover(hero,LEFT_W,H,.50,.48)
-    hero_bg=ImageEnhance.Contrast(hero_bg).enhance(1.06)
-    hero_bg=ImageEnhance.Brightness(hero_bg).enhance(.90)
-    canvas.alpha_composite(hero_bg,(0,0))
+    # O modelo aprovado é a própria base.
+    im=Image.open(TEMPLATE_PATH).convert("RGBA")
+    if im.size!=(W,H):
+        im=im.resize((W,H),Image.Resampling.LANCZOS)
 
-    # sombreado/vinheta da referência, sem "caixas" artificiais
-    canvas.alpha_composite(vignette_overlay((LEFT_W,H),135,110),(0,0))
+    # ============================================================
+    # 1. FOTO PRINCIPAL
+    # Mantém exatamente a geometria do modelo: grande área esquerda,
+    # carro inteiro, sem zoom exagerado.
+    # ============================================================
+    main_box=(0,278,938,900)
+    x1,y1,x2,y2=main_box
+    mw,mh=x2-x1,y2-y1
 
-    # topo escurecido para leitura
-    top_grad=Image.new("RGBA",(LEFT_W,470),(0,0,0,0))
-    tg=ImageDraw.Draw(top_grad)
-    for y in range(470):
-        a=int(205*(1-y/470)**.35)
-        tg.line((0,y,LEFT_W,y),fill=(0,0,0,a))
-    canvas.alpha_composite(top_grad,(0,0))
+    # Fundo natural da própria foto.
+    back=fit_cover(hero,mw,mh,.50,.48)
+    back=ImageEnhance.Brightness(back).enhance(.75)
+    back=ImageEnhance.Contrast(back).enhance(1.02)
+    im.alpha_composite(back,(x1,y1))
 
-    # rodapé levemente escurecido
-    foot=Image.new("RGBA",(LEFT_W,175),(0,0,0,155))
-    canvas.alpha_composite(foot,(0,849))
+    # Carro/foto inteira por cima, usando contain para evitar cortes.
+    fg=fit_contain(hero,900,595)
+    fg=ImageEnhance.Contrast(fg).enhance(1.04)
+    fg=ImageEnhance.Brightness(fg).enhance(.98)
 
-    d=ImageDraw.Draw(canvas)
+    fx=x1+(mw-fg.width)//2
+    fy=y1+(mh-fg.height)//2+8
 
-    # =========================================================
-    # LOGO / CABEÇALHO
-    # =========================================================
-    lg=fit_contain(logo,420,145)
-    canvas.alpha_composite(lg,(30,12))
+    # sombra suave
+    shadow=Image.new("RGBA",(fg.width+50,fg.height+50),(0,0,0,0))
+    sh=ImageDraw.Draw(shadow)
+    sh.rounded_rectangle(
+        (25,25,fg.width+25,fg.height+25),
+        radius=25,
+        fill=(0,0,0,70)
+    )
+    shadow=shadow.filter(ImageFilter.GaussianBlur(18))
+    im.alpha_composite(shadow,(fx-25,fy-25))
+    im.alpha_composite(fg,(fx,fy))
 
-    txt(d,(885,30),"S E M I N O V O S",18,WHITE,False,anchor="ra")
-    txt(d,(885,58),"D E  Q U A L I D A D E",16,WHITE,False,anchor="ra")
-    d.polygon([(855,76),(888,76),(875,108),(842,108)],fill=RED)
+    # vinheta leve para integração igual ao card aprovado
+    edge=Image.new("RGBA",(mw,mh),(0,0,0,0))
+    ed=ImageDraw.Draw(edge)
+    for i in range(70):
+        a=int(100*(1-i/70)**1.5)
+        ed.rectangle((i,i,mw-1-i,mh-1-i),outline=(0,0,0,a),width=2)
+    im.alpha_composite(edge,(x1,y1))
 
-    # Marca com espaçamento visual
+    # ============================================================
+    # 2. FOTOS DIREITAS — mesmas regiões do modelo aprovado
+    # ============================================================
+    # Interior
+    im.alpha_composite(image_with_dark_edges(interior,330,335,.50,.48),(1206,0))
+    # restaura coluna preta à esquerda da diagonal
+    d=ImageDraw.Draw(im)
+    d.polygon([(938,0),(1226,0),(1127,335),(938,335)],fill=(4,4,5,252))
+    d.line((1226,0,1127,335),fill=RED,width=5)
+
+    # Traseira
+    im.alpha_composite(image_with_dark_edges(traseira,440,274,.50,.50),(1096,336))
+    d=ImageDraw.Draw(im)
+    d.polygon([(938,336),(1145,336),(1060,610),(938,610)],fill=(4,4,5,252))
+    d.line((1145,336,1060,610),fill=RED,width=5)
+
+    # Lateral inferior
+    im.alpha_composite(image_with_dark_edges(lateral,455,240,.50,.50),(1081,710))
+    d=ImageDraw.Draw(im)
+    d.polygon([(938,610),(1155,610),(1064,950),(938,950)],fill=(4,4,5,252))
+    d.line((1155,610,1064,950),fill=RED,width=5)
+
+    # ============================================================
+    # 3. CABEÇALHO DINÂMICO
+    # Apaga apenas os textos variáveis; logo e decoração permanecem.
+    # ============================================================
+    dark_patch(im,(38,135,405,178),245)
+    dark_patch(im,(35,178,710,325),245)
+    dark_patch(im,(20,328,570,472),238)
+
+    d=ImageDraw.Draw(im)
+
     marca_spaced=" ".join(list(marca)) if len(marca)<=10 else marca
-    txt(d,(42,140),marca_spaced,36,RED,True)
+    txt(d,(58,140),marca_spaced,34,RED,True)
 
-    # Modelo
-    model_size=116 if len(modelo)<=10 else 102 if len(modelo)<=13 else 82
-    txt(d,(35,178),modelo,model_size,WHITE,True)
+    model_size=110 if len(modelo)<=10 else 96 if len(modelo)<=13 else 78
+    txt(d,(42,178),modelo,model_size,WHITE,True)
 
-    # ano e mecânica
-    d.polygon([(34,329),(210,329),(197,389),(22,389)],fill=RED)
-    txt(d,(112,359),ano,42,WHITE,True,anchor="mm")
-    txt(d,(235,360),f"{cambio}  /  {combustivel}",31,WHITE,True,anchor="lm")
+    d.polygon([(34,330),(210,330),(198,389),(22,389)],fill=RED)
+    txt(d,(112,359),ano,40,WHITE,True,anchor="mm")
+    txt(d,(236,359),f"{cambio}  /  {combustivel}",30,WHITE,True,anchor="lm")
 
-    txt(d,(42,405),"ESPAÇO, CONFORTO",27,WHITE,True)
-    txt(d,(42,439),"E VERSATILIDADE",27,RED,True)
+    txt(d,(44,406),"ESPAÇO, CONFORTO",26,WHITE,True)
+    txt(d,(44,440),"E VERSATILIDADE",26,RED,True)
 
-    # =========================================================
-    # BENEFÍCIOS
-    # =========================================================
-    benefit_y=918
-    centers=[72,185,298,411]
-    labels=["CONFORTO","ESPAÇO\nINTERNO","TECNOLOGIA","SEGURANÇA"]
-    for i,(cx,lab) in enumerate(zip(centers,labels)):
-        d.rounded_rectangle((cx-14,benefit_y-26,cx+14,benefit_y+2),radius=6,outline=RED,width=2)
-        txt(d,(cx,benefit_y+24),lab,14,WHITE,True,anchor="ma")
-        if i<3:
-            d.line((cx+54,benefit_y-28,cx+54,benefit_y+52),fill=(125,0,0),width=2)
+    # ============================================================
+    # 4. PREÇO
+    # Preserva a área diagonal e troca somente o conteúdo.
+    # ============================================================
+    d.polygon([(635,804),(938,804),(938,1024),(560,1024)],fill=(4,4,5,250))
+    d.line((635,804,560,1024),fill=RED,width=8)
 
-    # =========================================================
-    # PREÇO
-    # =========================================================
-    # bloco diagonal exatamente no canto inferior direito do painel esquerdo
-    d.polygon([(628,815),(LEFT_W,815),(LEFT_W,1024),(555,1024)],fill=(4,4,5,248))
-    d.line((628,815,555,1024),fill=RED,width=8)
+    txt(d,(790,823),"POR APENAS",20,WHITE,True,anchor="ma")
+    txt(d,(645,860),"R$",38,RED,True)
 
-    txt(d,(785,835),"POR APENAS",20,WHITE,True,anchor="ma")
-    txt(d,(635,880),"R$",40,RED,True)
-    txt(d,(700,856),preco,74,WHITE,True)
-    d.rectangle((655,947,920,995),fill=RED)
-    txt(d,(787,971),"FALE CONOSCO",22,WHITE,True,anchor="mm")
+    psize=70 if len(preco)<=6 else 60
+    txt(d,(708,843),preco,psize,WHITE,True)
 
-    # =========================================================
-    # COLUNA DIREITA
-    # =========================================================
-    d.rectangle((RIGHT_X,0,W,H),fill=(5,5,6,255))
+    d.rectangle((650,945,925,995),fill=RED)
+    txt(d,(787,970),"FALE CONOSCO",22,WHITE,True,anchor="mm")
 
-    # Destaques — coluna texto
-    txt(d,(965,28),"DESTAQUES",34,WHITE,True)
-    txt(d,(965,64),"DO VEÍCULO",34,RED,True)
-
+    # ============================================================
+    # 5. DESTAQUES
+    # Mantém título/ícones do modelo e troca somente frases.
+    # ============================================================
     opts=data.get("opcionais") or []
     if isinstance(opts,str):
         opts=[x.strip() for x in opts.split(",") if x.strip()]
     shown=[str(x) for x in opts][:8]
+
     if not shown:
         shown=[
             "Motor 1.6 Flex",
@@ -272,69 +287,68 @@ def render_post(raw):
             "Airbags + ABS"
         ]
 
-    yy=112
-    for item in shown[:8]:
-        d.rounded_rectangle((965,yy-5,995,yy+25),radius=5,outline=RED,width=2)
-        txt(d,(1010,yy+10),item,15,WHITE,False,anchor="lm")
-        yy+=40
+    # Região somente das descrições
+    dark_patch(im,(1015,95,1128,420),252)
+    d=ImageDraw.Draw(im)
 
-    # Foto interior direita superior
-    interior_box=(1210,0,1536,335)
-    canvas.alpha_composite(fit_cover(interior,326,335,.5,.50),(1210,0))
-    d.line((1210,0,1117,335),fill=RED,width=5)
+    ys=[116,156,196,236,276,316,356,396]
+    for item,y in zip(shown,ys):
+        size=14 if len(item)<=22 else 12
+        txt(d,(1020,y),item,size,WHITE,False)
 
-    # Foto traseira no meio
-    mid_box=(1060,338,1536,610)
-    canvas.alpha_composite(fit_cover(traseira,476,272,.50,.50),(1060,338))
-    d.line((1148,338,1060,610),fill=RED,width=5)
-
-    # =========================================================
-    # FICHA TÉCNICA
-    # =========================================================
-    txt(d,(965,625),"FICHA",34,WHITE,True)
-    txt(d,(965,662),"TÉCNICA",34,RED,True)
-
-    specs=[
-        ("ANO/MODELO",ano,"calendar"),
-        ("QUILOMETRAGEM",f"{km} KM" if km else "","speed"),
-        ("COMBUSTÍVEL",combustivel,"fuel"),
-        ("CÂMBIO",cambio,"gear"),
-        ("COR",cor,"color"),
-        ("PORTAS",f"{portas} PORTAS" if portas else "","door"),
+    # ============================================================
+    # 6. FICHA TÉCNICA
+    # Mantém ícones e rótulos do template, troca somente valores.
+    # ============================================================
+    values=[
+        ano,
+        f"{km} KM" if km else "",
+        combustivel,
+        cambio,
+        cor,
+        f"{portas} PORTAS" if portas else ""
     ]
 
-    sy=708
-    for k,v,kind in specs:
-        if not v:
-            continue
-        draw_icon(d,965,sy-10,kind)
-        txt(d,(1012,sy-2),k,11,GRAY,True)
-        txt(d,(1012,sy+16),v,17,WHITE,True)
-        sy+=47
+    # Máscaras pequenas, uma por valor.
+    value_boxes=[
+        (1015,692,1095,720),
+        (1015,732,1110,760),
+        (1015,772,1095,800),
+        (1015,812,1095,840),
+        (1015,852,1095,880),
+        (1015,892,1115,925)
+    ]
+    for box in value_boxes:
+        dark_patch(im,box,252)
 
-    # Foto lateral inferior direita
-    canvas.alpha_composite(fit_cover(lateral,410,244,.50,.50),(1126,706))
-    d.line((1155,610,1062,950),fill=RED,width=5)
+    d=ImageDraw.Draw(im)
+    ys=[700,740,780,820,860,900]
+    for val,y in zip(values,ys):
+        if val:
+            txt(d,(1017,y),val,16,WHITE,True)
 
-    # =========================================================
-    # RODAPÉ DIREITO
-    # =========================================================
-    d.rectangle((RIGHT_X,952,W,H),fill=(0,0,0,255))
+    # ============================================================
+    # 7. CONTATO
+    # ============================================================
     whatsapp=str(data.get("whatsapp") or "(51) 99575-1376")
     instagram=str(data.get("instagram") or "@premiumautomarcas")
 
-    txt(d,(970,986),whatsapp,17,WHITE,True)
-    txt(d,(1510,986),instagram.upper(),16,WHITE,True,anchor="ra")
+    dark_patch(im,(1000,955,1230,1024),255)
+    dark_patch(im,(1245,955,1536,1024),255)
+    d=ImageDraw.Draw(im)
+    txt(d,(1020,978),whatsapp,17,WHITE,True)
+    txt(d,(1510,978),instagram.upper(),16,WHITE,True,anchor="ra")
 
-    return canvas
+    return im
 
 @post_bp.get("/post-health")
 def post_health():
     return {
         "ok":True,
         "service":"premium-post-renderer",
-        "template":"approved-layout-v3",
+        "template":"approved-reference-v4",
         "size":"1536x1024",
+        "template_found":TEMPLATE_PATH.exists(),
         "supabase":{
             "configured":bool(SUPABASE_SERVICE_KEY),
             "bucket":SUPABASE_BUCKET,
@@ -356,7 +370,7 @@ def post():
             "id":job,
             "url":url,
             "post_url":url,
-            "template":"post_aprovado_v3",
+            "template":"post_aprovado_v4",
             "source_price":data.get("preco")
         })
     except Exception as e:
