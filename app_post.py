@@ -1,17 +1,19 @@
-
 from flask import Blueprint, request, jsonify
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
-from pathlib import Path
 import requests, uuid, os, io
 
 post_bp = Blueprint("post_bp", __name__)
-BASE = Path(__file__).parent
-TEMPLATE_PATH = BASE / "post_template.png"
 
 W, H = 1536, 1024
-RED=(235,25,34); WHITE=(248,248,248); BLACK=(4,4,5); GRAY=(175,175,175)
+LEFT_W = 938
+RIGHT_X = LEFT_W
 
-FONT_BOLD = next((p for p in [
+RED=(235,25,34)
+WHITE=(248,248,248)
+BLACK=(3,3,4)
+GRAY=(175,175,175)
+
+FONT_COND = next((p for p in [
     "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 ] if os.path.exists(p)), None)
@@ -19,17 +21,21 @@ FONT_REG = next((p for p in [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 ] if os.path.exists(p)), None)
 
-SUPABASE_URL=os.environ.get(
-    "SUPABASE_URL",
-    "https://kbmryoeevdxvugcelflp.supabase.co"
-).rstrip("/")
+SUPABASE_URL=os.environ.get("SUPABASE_URL","https://kbmryoeevdxvugcelflp.supabase.co").rstrip("/")
 SUPABASE_BUCKET=os.environ.get("SUPABASE_BUCKET","veiculos")
 SUPABASE_SERVICE_KEY=os.environ.get("SUPABASE_SERVICE_KEY","")
 SUPABASE_POSTS_FOLDER=os.environ.get("SUPABASE_POSTS_FOLDER","posts")
+DEFAULT_LOGO_URL=os.environ.get(
+    "PREMIUM_LOGO_URL",
+    "https://kbmryoeevdxvugcelflp.supabase.co/storage/v1/object/public/veiculos/Musicas/Logo%20minimalista%20de%20carro%20esportivo.png"
+)
 
-def F(size,bold=False):
-    p=FONT_BOLD if bold else FONT_REG
+def F(size,bold=True):
+    p = FONT_COND if bold else FONT_REG
     return ImageFont.truetype(p,size) if p else ImageFont.load_default()
+
+def txt(d,xy,val,size,fill=WHITE,bold=True,anchor=None):
+    d.text(xy,str(val),font=F(size,bold),fill=fill,anchor=anchor)
 
 def normalize(raw):
     if isinstance(raw,dict) and isinstance(raw.get("body"),dict):
@@ -45,17 +51,27 @@ def dl(url):
     r.raise_for_status()
     return Image.open(io.BytesIO(r.content)).convert("RGBA")
 
-def cover(im,w,h,focus_y=.5):
+def fit_cover(im,w,h,focus_x=.5,focus_y=.5):
     s=max(w/im.width,h/im.height)
     r=im.resize((int(im.width*s),int(im.height*s)),Image.Resampling.LANCZOS)
-    x=max(0,(r.width-w)//2)
-    max_y=max(0,r.height-h)
-    y=int(max_y*focus_y)
+    max_x=max(0,r.width-w); max_y=max(0,r.height-h)
+    x=int(max_x*focus_x); y=int(max_y*focus_y)
     return r.crop((x,y,x+w,y+h))
 
-def fit(im,mw,mh):
+def fit_contain(im,mw,mh):
     s=min(mw/im.width,mh/im.height)
     return im.resize((max(1,int(im.width*s)),max(1,int(im.height*s))),Image.Resampling.LANCZOS)
+
+def clean_logo(logo):
+    logo=logo.convert("RGBA")
+    px=logo.load()
+    for y in range(logo.height):
+        for x in range(logo.width):
+            r,g,b,a=px[x,y]
+            if max(r,g,b)<18:
+                px[x,y]=(r,g,b,0)
+    bb=logo.getbbox()
+    return logo.crop(bb) if bb else logo
 
 def fmt_price(v):
     if v is None or str(v).strip()=="":
@@ -77,17 +93,6 @@ def fmt_km(v):
     except:
         return str(v)
 
-def put_text(d,xy,value,size,fill=WHITE,bold=True,anchor=None):
-    d.text(xy,str(value),font=F(size,bold),fill=fill,anchor=anchor)
-
-def erase(im,box,fill=(5,5,6,255)):
-    ImageDraw.Draw(im).rectangle(box,fill=fill)
-
-def paste_photo(im,photo,box,focus_y=.5):
-    x1,y1,x2,y2=box
-    p=cover(photo,x2-x1,y2-y1,focus_y)
-    im.alpha_composite(p,(x1,y1))
-
 def upload(img,job):
     if not SUPABASE_SERVICE_KEY:
         raise RuntimeError("SUPABASE_SERVICE_KEY não configurada no Render.")
@@ -106,6 +111,35 @@ def upload(img,job):
     if r.status_code not in (200,201):
         raise RuntimeError(f"Falha upload Post HTTP {r.status_code}: {r.text[:800]}")
     return f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{name}"
+
+def draw_icon(d,x,y,kind):
+    # 34x34 outline icon inside a small red square — same visual weight as approved reference.
+    d.rounded_rectangle((x,y,x+34,y+34),radius=6,outline=RED,width=2)
+    if kind=="calendar":
+        d.line((x+7,y+11,x+27,y+11),fill=RED,width=2)
+        d.line((x+10,y+6,x+10,y+13),fill=RED,width=2)
+        d.line((x+24,y+6,x+24,y+13),fill=RED,width=2)
+    elif kind=="speed":
+        d.arc((x+7,y+8,x+27,y+28),180,355,fill=RED,width=2)
+        d.line((x+17,y+20,x+24,y+13),fill=RED,width=2)
+    elif kind=="fuel":
+        d.rectangle((x+9,y+8,x+21,y+27),outline=RED,width=2)
+        d.line((x+21,y+12,x+27,y+17),fill=RED,width=2)
+    elif kind=="gear":
+        d.ellipse((x+10,y+10,x+24,y+24),outline=RED,width=2)
+    elif kind=="color":
+        d.arc((x+8,y+8,x+26,y+26),20,330,fill=RED,width=2)
+    elif kind=="door":
+        d.rectangle((x+10,y+7,x+24,y+27),outline=RED,width=2)
+
+def vignette_overlay(size, strength=120, edge=95):
+    w,h=size
+    ov=Image.new("RGBA",(w,h),(0,0,0,0))
+    d=ImageDraw.Draw(ov)
+    for i in range(edge):
+        a=int(strength*(1-i/edge)**1.7)
+        d.rectangle((i,i,w-1-i,h-1-i),outline=(0,0,0,a),width=2)
+    return ov
 
 def render_post(raw):
     data=normalize(raw)
@@ -132,89 +166,99 @@ def render_post(raw):
     interior=dl(fotos[min(5,len(fotos)-1)])
     traseira=dl(fotos[min(10,len(fotos)-1)])
     lateral=dl(fotos[min(3,len(fotos)-1)])
-
-    if not TEMPLATE_PATH.exists():
-        raise RuntimeError("post_template.png não encontrado no repositório.")
-
-    im=Image.open(TEMPLATE_PATH).convert("RGBA")
-    if im.size!=(W,H):
-        im=im.resize((W,H),Image.Resampling.LANCZOS)
+    logo=clean_logo(dl(data.get("logo_url") or DEFAULT_LOGO_URL))
 
     # =========================================================
-    # FOTOS — usa exatamente os espaços visuais do modelo aprovado
+    # CANVAS / FOTO PRINCIPAL
     # =========================================================
+    canvas=Image.new("RGBA",(W,H),BLACK+(255,))
 
-    # Foto principal: ocupa a mesma grande área da esquerda.
-    # Primeiro um fundo da própria foto, depois uma leve sombra nas bordas.
-    hero_box=(0,278,940,888)
-    hero_img=cover(hero,940,610,.48)
-    hero_img=ImageEnhance.Contrast(hero_img).enhance(1.03)
-    hero_img=ImageEnhance.Brightness(hero_img).enhance(.96)
+    # A referência aprovada usa a foto principal como fundo de toda a área esquerda.
+    hero_bg=fit_cover(hero,LEFT_W,H,.50,.48)
+    hero_bg=ImageEnhance.Contrast(hero_bg).enhance(1.06)
+    hero_bg=ImageEnhance.Brightness(hero_bg).enhance(.90)
+    canvas.alpha_composite(hero_bg,(0,0))
 
-    vignette=Image.new("RGBA",(940,610),(0,0,0,0))
-    vd=ImageDraw.Draw(vignette)
-    for i in range(65):
-        a=int(95*(1-i/65)**1.7)
-        vd.rectangle((i,i,939-i,609-i),outline=(0,0,0,a),width=2)
-    hero_img=Image.alpha_composite(hero_img,vignette)
-    im.alpha_composite(hero_img,(0,278))
+    # sombreado/vinheta da referência, sem "caixas" artificiais
+    canvas.alpha_composite(vignette_overlay((LEFT_W,H),135,110),(0,0))
 
-    # Fotos da coluna direita nas mesmas faixas do card.
-    paste_photo(im,interior,(1220,0,1536,335),.50)
-    paste_photo(im,traseira,(1088,338,1536,610),.50)
-    paste_photo(im,lateral,(1088,706,1536,949),.52)
+    # topo escurecido para leitura
+    top_grad=Image.new("RGBA",(LEFT_W,470),(0,0,0,0))
+    tg=ImageDraw.Draw(top_grad)
+    for y in range(470):
+        a=int(205*(1-y/470)**.35)
+        tg.line((0,y,LEFT_W,y),fill=(0,0,0,a))
+    canvas.alpha_composite(top_grad,(0,0))
 
-    # Redesenha as linhas vermelhas separadoras que ficam por cima das fotos.
-    d=ImageDraw.Draw(im)
-    d.line((1225,0,1127,335),fill=RED,width=5)
-    d.line((1146,338,1060,610),fill=RED,width=5)
-    d.line((1155,610,1060,949),fill=RED,width=5)
+    # rodapé levemente escurecido
+    foot=Image.new("RGBA",(LEFT_W,175),(0,0,0,155))
+    canvas.alpha_composite(foot,(0,849))
+
+    d=ImageDraw.Draw(canvas)
 
     # =========================================================
-    # CABEÇALHO — apaga só os textos antigos, sem criar um painel gigante
+    # LOGO / CABEÇALHO
     # =========================================================
-    erase(im,(42,136,380,176),(4,4,5,245))    # CITROEN antigo
-    erase(im,(38,178,720,322),(4,4,5,245))    # modelo antigo
-    erase(im,(28,328,210,391),(4,4,5,245))    # ano antigo
-    erase(im,(225,333,555,388),(4,4,5,245))   # manual/flex
-    erase(im,(40,398,315,472),(4,4,5,225))    # slogan
+    lg=fit_contain(logo,420,145)
+    canvas.alpha_composite(lg,(30,12))
 
-    d=ImageDraw.Draw(im)
+    txt(d,(885,30),"S E M I N O V O S",18,WHITE,False,anchor="ra")
+    txt(d,(885,58),"D E  Q U A L I D A D E",16,WHITE,False,anchor="ra")
+    d.polygon([(855,76),(888,76),(875,108),(842,108)],fill=RED)
+
+    # Marca com espaçamento visual
     marca_spaced=" ".join(list(marca)) if len(marca)<=10 else marca
-    put_text(d,(58,140),marca_spaced,36,RED,True)
+    txt(d,(42,140),marca_spaced,36,RED,True)
 
-    # tamanho próximo ao card original; não extrapola o bloco.
-    msize=112 if len(modelo)<=10 else 98 if len(modelo)<=13 else 78
-    put_text(d,(42,177),modelo,msize,WHITE,True)
+    # Modelo
+    model_size=116 if len(modelo)<=10 else 102 if len(modelo)<=13 else 82
+    txt(d,(35,178),modelo,model_size,WHITE,True)
 
-    # caixa de ano no mesmo formato do original
-    d.polygon([(34,331),(210,331),(197,389),(22,389)],fill=RED)
-    put_text(d,(112,360),ano,42,WHITE,True,anchor="mm")
+    # ano e mecânica
+    d.polygon([(34,329),(210,329),(197,389),(22,389)],fill=RED)
+    txt(d,(112,359),ano,42,WHITE,True,anchor="mm")
+    txt(d,(235,360),f"{cambio}  /  {combustivel}",31,WHITE,True,anchor="lm")
 
-    put_text(d,(236,360),f"{cambio}  /  {combustivel}",31,WHITE,True,anchor="lm")
-    put_text(d,(45,405),"ESPAÇO, CONFORTO",27,WHITE,True)
-    put_text(d,(45,441),"E VERSATILIDADE",27,RED,True)
-
-    # =========================================================
-    # PREÇO — troca somente os números, preservando o design do template
-    # =========================================================
-    erase(im,(650,824,915,930),(5,5,6,250))
-    d=ImageDraw.Draw(im)
-
-    # "POR APENAS" permanece praticamente no mesmo lugar.
-    put_text(d,(785,834),"POR APENAS",20,WHITE,True,anchor="ma")
-    put_text(d,(650,874),"R$",39,RED,True)
-
-    psize=70 if len(preco)<=6 else 60
-    put_text(d,(712,852),preco,psize,WHITE,True)
+    txt(d,(42,405),"ESPAÇO, CONFORTO",27,WHITE,True)
+    txt(d,(42,439),"E VERSATILIDADE",27,RED,True)
 
     # =========================================================
-    # DESTAQUES — preserva título e ícones; muda só a descrição
+    # BENEFÍCIOS
     # =========================================================
+    benefit_y=918
+    centers=[72,185,298,411]
+    labels=["CONFORTO","ESPAÇO\nINTERNO","TECNOLOGIA","SEGURANÇA"]
+    for i,(cx,lab) in enumerate(zip(centers,labels)):
+        d.rounded_rectangle((cx-14,benefit_y-26,cx+14,benefit_y+2),radius=6,outline=RED,width=2)
+        txt(d,(cx,benefit_y+24),lab,14,WHITE,True,anchor="ma")
+        if i<3:
+            d.line((cx+54,benefit_y-28,cx+54,benefit_y+52),fill=(125,0,0),width=2)
+
+    # =========================================================
+    # PREÇO
+    # =========================================================
+    # bloco diagonal exatamente no canto inferior direito do painel esquerdo
+    d.polygon([(628,815),(LEFT_W,815),(LEFT_W,1024),(555,1024)],fill=(4,4,5,248))
+    d.line((628,815,555,1024),fill=RED,width=8)
+
+    txt(d,(785,835),"POR APENAS",20,WHITE,True,anchor="ma")
+    txt(d,(635,880),"R$",40,RED,True)
+    txt(d,(700,856),preco,74,WHITE,True)
+    d.rectangle((655,947,920,995),fill=RED)
+    txt(d,(787,971),"FALE CONOSCO",22,WHITE,True,anchor="mm")
+
+    # =========================================================
+    # COLUNA DIREITA
+    # =========================================================
+    d.rectangle((RIGHT_X,0,W,H),fill=(5,5,6,255))
+
+    # Destaques — coluna texto
+    txt(d,(965,28),"DESTAQUES",34,WHITE,True)
+    txt(d,(965,64),"DO VEÍCULO",34,RED,True)
+
     opts=data.get("opcionais") or []
     if isinstance(opts,str):
         opts=[x.strip() for x in opts.split(",") if x.strip()]
-
     shown=[str(x) for x in opts][:8]
     if not shown:
         shown=[
@@ -228,66 +272,69 @@ def render_post(raw):
             "Airbags + ABS"
         ]
 
-    # cobre só a coluna de frases, nunca os ícones/título
-    erase(im,(1021,100,1158,412),(5,5,6,248))
-    d=ImageDraw.Draw(im)
-    ys=[116,156,196,236,276,316,356,396]
-    for item,y in zip(shown,ys):
-        sz=15 if len(item)<=20 else 13
-        put_text(d,(1028,y),item,sz,WHITE,False)
+    yy=112
+    for item in shown[:8]:
+        d.rounded_rectangle((965,yy-5,995,yy+25),radius=5,outline=RED,width=2)
+        txt(d,(1010,yy+10),item,15,WHITE,False,anchor="lm")
+        yy+=40
+
+    # Foto interior direita superior
+    interior_box=(1210,0,1536,335)
+    canvas.alpha_composite(fit_cover(interior,326,335,.5,.50),(1210,0))
+    d.line((1210,0,1117,335),fill=RED,width=5)
+
+    # Foto traseira no meio
+    mid_box=(1060,338,1536,610)
+    canvas.alpha_composite(fit_cover(traseira,476,272,.50,.50),(1060,338))
+    d.line((1148,338,1060,610),fill=RED,width=5)
 
     # =========================================================
-    # FICHA TÉCNICA — preserva rótulos e ícones; troca os valores
+    # FICHA TÉCNICA
     # =========================================================
-    # pequenas máscaras em cada valor
-    value_boxes=[
-        (1010,700,1080,727),
-        (1010,740,1095,767),
-        (1010,780,1085,807),
-        (1010,820,1085,847),
-        (1010,860,1085,887),
-        (1010,900,1105,932),
+    txt(d,(965,625),"FICHA",34,WHITE,True)
+    txt(d,(965,662),"TÉCNICA",34,RED,True)
+
+    specs=[
+        ("ANO/MODELO",ano,"calendar"),
+        ("QUILOMETRAGEM",f"{km} KM" if km else "","speed"),
+        ("COMBUSTÍVEL",combustivel,"fuel"),
+        ("CÂMBIO",cambio,"gear"),
+        ("COR",cor,"color"),
+        ("PORTAS",f"{portas} PORTAS" if portas else "","door"),
     ]
-    vals=[
-        ano,
-        f"{km} KM" if km else "",
-        combustivel,
-        cambio,
-        cor,
-        f"{portas} PORTAS" if portas else ""
-    ]
 
-    for box in value_boxes:
-        erase(im,box,(5,5,6,250))
+    sy=708
+    for k,v,kind in specs:
+        if not v:
+            continue
+        draw_icon(d,965,sy-10,kind)
+        txt(d,(1012,sy-2),k,11,GRAY,True)
+        txt(d,(1012,sy+16),v,17,WHITE,True)
+        sy+=47
 
-    d=ImageDraw.Draw(im)
-    ys=[707,747,787,827,867,907]
-    for val,y in zip(vals,ys):
-        if val:
-            put_text(d,(1012,y),val,17,WHITE,True)
+    # Foto lateral inferior direita
+    canvas.alpha_composite(fit_cover(lateral,410,244,.50,.50),(1126,706))
+    d.line((1155,610,1062,950),fill=RED,width=5)
 
     # =========================================================
-    # CONTATO — troca apenas se payload enviar; mantém estrutura original
+    # RODAPÉ DIREITO
     # =========================================================
+    d.rectangle((RIGHT_X,952,W,H),fill=(0,0,0,255))
     whatsapp=str(data.get("whatsapp") or "(51) 99575-1376")
     instagram=str(data.get("instagram") or "@premiumautomarcas")
 
-    erase(im,(1005,957,1225,1020),(0,0,0,250))
-    erase(im,(1260,957,1535,1020),(0,0,0,250))
-    d=ImageDraw.Draw(im)
-    put_text(d,(1025,980),whatsapp,18,WHITE,True)
-    put_text(d,(1510,980),instagram.upper(),17,WHITE,True,anchor="ra")
+    txt(d,(970,986),whatsapp,17,WHITE,True)
+    txt(d,(1510,986),instagram.upper(),16,WHITE,True,anchor="ra")
 
-    return im
+    return canvas
 
 @post_bp.get("/post-health")
 def post_health():
     return {
         "ok":True,
         "service":"premium-post-renderer",
-        "template":"approved-reference-v2",
+        "template":"approved-layout-v3",
         "size":"1536x1024",
-        "template_found":TEMPLATE_PATH.exists(),
         "supabase":{
             "configured":bool(SUPABASE_SERVICE_KEY),
             "bucket":SUPABASE_BUCKET,
@@ -309,10 +356,9 @@ def post():
             "id":job,
             "url":url,
             "post_url":url,
-            "template":"post_aprovado_fiel_v2",
+            "template":"post_aprovado_v3",
             "source_price":data.get("preco")
         })
-
     except Exception as e:
         import traceback
         traceback.print_exc()
