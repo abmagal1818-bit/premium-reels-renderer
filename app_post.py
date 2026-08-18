@@ -151,9 +151,9 @@ def render(raw):
     d.line((1155,610,1064,950),fill=RED,width=5)
 
     # --------- Replace dynamic texts only ----------
-    dark_rect(im,(30,135,400,175),245)
-    dark_rect(im,(35,178,700,325),245)
-    dark_rect(im,(20,328,555,470),235)
+    dark_rect(im,(0,130,945,300),255)
+    pass
+    dark_rect(im,(20,328,555,470),255)
     d=ImageDraw.Draw(im)
     marca_spaced=" ".join(list(marca)) if len(marca)<=10 else marca
     draw_text(d,(55,140),marca_spaced,34,RED,True)
@@ -181,7 +181,8 @@ def render(raw):
     if isinstance(opts,str): opts=[x.strip() for x in opts.split(",") if x.strip()]
     if not opts:
         opts=["Motor 1.6 Flex",f"Câmbio {cambio.title()}","Direção Elétrica","Ar Condicionado","Vidros e Travas Elétricas","Rodas de Liga Leve","Central Multimídia","Airbags + ABS"]
-    dark_rect(im,(1015,95,1130,420),252)
+    dark_rect(im,(1010,90,1200,338),255)
+    dark_rect(im,(1010,338,1104,420),255)
     d=ImageDraw.Draw(im)
     ys=[116,156,196,236,276,316,356,396]
     for item,y in zip(opts[:8],ys):
