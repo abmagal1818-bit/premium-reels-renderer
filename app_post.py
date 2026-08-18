@@ -90,6 +90,25 @@ def dark_rect(im,box,alpha=255):
     patch=Image.new("RGBA",(x2-x1,y2-y1),(4,4,5,alpha))
     im.alpha_composite(patch,(x1,y1))
 
+def diagonal_mask(w,h,x0,y0,p1,p2):
+    mask=Image.new("L",(w,h),255)
+    dd=ImageDraw.Draw(mask)
+    lx1,ly1=p1
+    lx2,ly2=p2
+    for ly in range(h):
+        gy=y0+ly
+        t=(gy-ly1)/(ly2-ly1) if ly2!=ly1 else 0
+        lx=lx1+(lx2-lx1)*t
+        cut=int(round(lx-x0))
+        if cut>0:
+            dd.line((0,ly,min(cut,w)-1,ly),fill=0)
+    return mask
+
+def paste_masked(im,photo,w,h,x0,y0,p1,p2):
+    img_c=cover(photo,w,h,.5,.5).convert("RGB")
+    mask=diagonal_mask(w,h,x0,y0,p1,p2)
+    im.paste(img_c,(x0,y0),mask)
+
 def draw_text(d,xy,text,size,fill=WHITE,bold=True,anchor=None):
     d.text(xy,str(text),font=F(size,bold),fill=fill,anchor=anchor)
 
@@ -140,9 +159,9 @@ def render(raw):
     im.alpha_composite(fg,(fx,fy))
 
     # RIGHT PHOTOS
-    im.alpha_composite(cover(interior,320,335,.5,.5),(1216,0))
-    im.alpha_composite(cover(traseira,430,272,.5,.5),(1106,338))
-    im.alpha_composite(cover(lateral,450,240,.5,.5),(1086,710))
+    paste_masked(im,interior,320,335,1216,0,(1225,0),(1127,335))
+    paste_masked(im,traseira,430,272,1106,338,(1148,338),(1060,610))
+    paste_masked(im,lateral,450,240,1086,710,(1155,610),(1064,950))
 
     d=ImageDraw.Draw(im)
     # restore red separators exactly
@@ -171,8 +190,8 @@ def render(raw):
     d.polygon([(635,805),(938,805),(938,1024),(560,1024)],fill=(4,4,5))
     d.line((635,805,560,1024),fill=RED,width=8)
     draw_text(d,(790,823),"POR APENAS",20,WHITE,True,anchor="ma")
-    draw_text(d,(645,862),"R$",38,RED,True)
-    draw_text(d,(705,845),preco,68 if len(preco)<=6 else 58,WHITE,True)
+    draw_text(d,(628,865),"R$",34,RED,True)
+    draw_text(d,(685,848),preco,62 if len(preco)<=6 else 52,WHITE,True)
     d.rectangle((650,945,925,995),fill=RED)
     draw_text(d,(787,970),"FALE CONOSCO",22,WHITE,True,anchor="mm")
 
@@ -201,8 +220,8 @@ def render(raw):
     dark_rect(im,(1005,955,1230,1024),255)
     dark_rect(im,(1248,955,1536,1024),255)
     d=ImageDraw.Draw(im)
-    draw_text(d,(1022,978),data.get("whatsapp") or "(51) 99575-1376",17,WHITE,True)
-    draw_text(d,(1510,978),(data.get("instagram") or "@premiumautomarcas").upper(),16,WHITE,True,anchor="ra")
+    draw_text(d,(1042,978),data.get("whatsapp") or "(51) 99575-1376",17,WHITE,True)
+    draw_text(d,(1500,978),(data.get("instagram") or "@premiumautomarcas").upper(),15,WHITE,True,anchor="ra")
 
     return im
 
