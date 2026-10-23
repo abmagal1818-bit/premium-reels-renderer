@@ -14,7 +14,8 @@ SUPABASE_BUCKET = os.environ.get("SUPABASE_BUCKET", "veiculos")
 SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 SUPABASE_POSTS_FOLDER = os.environ.get("SUPABASE_POSTS_FOLDER", "posts")
 
-W, H = 1080, 1560
+W, H = 1080, 1350  # 4:5 — Instagram feed's max portrait ratio; taller images get auto-cropped
+SCALE = H / 1560.0  # original design was tuned for a 1560-tall canvas
 RED = (230, 57, 70)
 BLACK = (8, 8, 8)
 WHITE = (255, 255, 255)
@@ -251,8 +252,10 @@ def build_render_data(raw):
     if capa and capa not in fotos:
         fotos = [capa] + fotos
     fotos = [x for x in fotos if x]
-    if len(fotos) < 4:
-        raise ValueError("São necessárias pelo menos 4 fotos (1 principal + 3 na grade).")
+    if not fotos:
+        raise ValueError("Nenhuma foto recebida.")
+    while len(fotos) < 4:
+        fotos.append(fotos[-1])
 
     photo_main = fotos[0]
     photo_small = fotos[1:4]
@@ -286,12 +289,13 @@ def render_png(raw):
     img = Image.new("RGB", (W, H), BLACK)
     d = ImageDraw.Draw(img)
 
-    header_h = 230
-    ribbon_y, ribbon_h = 230, 60
-    photo_y, photo_h = 290, 610
+    header_h = int(230 * SCALE)
+    ribbon_y, ribbon_h = header_h, int(60 * SCALE)
+    photo_y, photo_h = ribbon_y + ribbon_h, int(610 * SCALE)
     photo_w = int(W * 0.72)
-    grid_y, grid_h = 900, 210
-    tag_y, tag_h = 1110, 450
+    grid_y, grid_h = photo_y + photo_h, int(210 * SCALE)
+    tag_y = grid_y + grid_h
+    tag_h = H - tag_y
     diag_shift = 90
 
     main_im = download_image(rd["photo_main"])
@@ -308,33 +312,37 @@ def render_png(raw):
     d.polygon([(0, 0), (W, 0), (W, 1), (int(W * 0.70) - diag_shift, header_h), (0, header_h)], fill=BLACK)
     d.polygon([(int(W * 0.70) - diag_shift, 0), (W, 0), (W, ribbon_y + ribbon_h), (photo_w - diag_shift, ribbon_y + ribbon_h), (photo_w, ribbon_y)], fill=BLACK)
 
-    tf = font(70)
+    y_marca = int(28 * SCALE)
+    y_modelo = int(100 * SCALE)
+    y_ano = int(172 * SCALE)
+
+    tf = font(int(70 * SCALE))
     bbox = d.textbbox((0, 0), marca, font=tf)
-    while bbox[2] - bbox[0] > W * 0.60 and tf.size > 30:
+    while bbox[2] - bbox[0] > W * 0.60 and tf.size > 26:
         tf = font(tf.size - 4)
         bbox = d.textbbox((0, 0), marca, font=tf)
-    d.text((40, 28), marca, font=tf, fill=WHITE, stroke_width=2, stroke_fill="black")
+    d.text((40, y_marca), marca, font=tf, fill=WHITE, stroke_width=2, stroke_fill="black")
 
-    mf = font(70)
+    mf = font(int(70 * SCALE))
     bbox = d.textbbox((0, 0), modelo, font=mf)
-    while bbox[2] - bbox[0] > W * 0.60 and mf.size > 30:
+    while bbox[2] - bbox[0] > W * 0.60 and mf.size > 26:
         mf = font(mf.size - 4)
         bbox = d.textbbox((0, 0), modelo, font=mf)
-    d.text((40, 100), modelo, font=mf, fill=WHITE, stroke_width=2, stroke_fill="black")
+    d.text((40, y_modelo), modelo, font=mf, fill=WHITE, stroke_width=2, stroke_fill="black")
 
-    af = font(54)
-    d.text((40, 172), ano, font=af, fill=RED, stroke_width=2, stroke_fill="black")
-    abbox = d.textbbox((40, 172), ano, font=af)
-    d.line([(abbox[2] + 16, 185), (abbox[2] + 220, 185)], fill=RED, width=5)
-    d.line([(abbox[2] + 16, 198), (abbox[2] + 180, 198)], fill=RED, width=3)
+    af = font(int(54 * SCALE))
+    d.text((40, y_ano), ano, font=af, fill=RED, stroke_width=2, stroke_fill="black")
+    abbox = d.textbbox((40, y_ano), ano, font=af)
+    d.line([(abbox[2] + 16, y_ano + int(13 * SCALE)), (abbox[2] + 220, y_ano + int(13 * SCALE))], fill=RED, width=5)
+    d.line([(abbox[2] + 16, y_ano + int(26 * SCALE)), (abbox[2] + 180, y_ano + int(26 * SCALE))], fill=RED, width=3)
 
-    badge_w, badge_h = 360, 108
+    badge_w, badge_h = int(360 * SCALE), int(108 * SCALE)
     badge_x = W - 40 - badge_w
-    badge_y = 22
+    badge_y = int(22 * SCALE)
     d.rounded_rectangle([badge_x, badge_y, badge_x + badge_w, badge_y + badge_h], radius=16, fill=WHITE, outline=RED, width=4)
 
     logo_im = Image.open(LOGO_PATH).convert("RGB")
-    pad = 18
+    pad = int(18 * SCALE)
     max_w, max_h = badge_w - pad * 2, badge_h - pad * 2
     lw_, lh_ = logo_im.size
     scale = min(max_w / lw_, max_h / lh_)
@@ -353,19 +361,19 @@ def render_png(raw):
         gw, gh = gb[2] - gb[0], gb[3] - gb[1]
         d.text((cx - gw / 2 - gb[0], cy - gh / 2 - gb[1]), glyph, font=phone_f, fill="white")
 
-    wf_num = font(34)
+    wf_num = font(int(34 * SCALE))
     nbb = d.textbbox((0, 0), whatsapp_number, font=wf_num)
     num_w = nbb[2] - nbb[0]
-    icon_r = 22
-    gap = 14
+    icon_r = int(22 * SCALE)
+    gap = int(14 * SCALE)
     total_w = icon_r * 2 + gap + num_w
     start_x = badge_x + badge_w - total_w
-    text_cy = badge_y + badge_h + 16 + icon_r
+    text_cy = badge_y + badge_h + int(16 * SCALE) + icon_r
     whatsapp_icon(start_x + icon_r, text_cy, icon_r)
     d.text((start_x + icon_r * 2 + gap, text_cy - (nbb[3] - nbb[1]) / 2 - nbb[1]), whatsapp_number, font=wf_num, fill="white", stroke_width=1, stroke_fill="black")
 
     d.rectangle([0, ribbon_y, W, ribbon_y + ribbon_h], fill=RED)
-    rf = font(40)
+    rf = font(int(40 * SCALE))
     bbox = d.textbbox((0, 0), ribbon_text, font=rf)
     d.text(((W - (bbox[2] - bbox[0])) / 2, ribbon_y + (ribbon_h - (bbox[3] - bbox[1])) / 2 - 6), ribbon_text, font=rf, fill=WHITE)
 
@@ -377,8 +385,8 @@ def render_png(raw):
     for i, (kind, label) in enumerate(features):
         fy = photo_y + row_h * i + row_h / 2
         icon_cx = list_x + 40
-        icon(d, icon_cx, fy, 24, kind)
-        f, lines = wrap_and_fit(d, label, text_w, 27)
+        icon(d, icon_cx, fy, int(24 * SCALE), kind)
+        f, lines = wrap_and_fit(d, label, text_w, int(27 * SCALE), min_size=13)
         lh_px = f.size + 6
         start_y = fy - (len(lines) - 1) * lh_px / 2
         for j, l in enumerate(lines):
@@ -403,17 +411,17 @@ def render_png(raw):
     w1 = words[0]
     w2 = " ".join(words[1:]) if len(words) > 1 else ""
 
-    layer1 = fit_distressed(d, w1, 150, (255, 255, 255), int(W * 0.95), seed=11)
-    layer2 = fit_distressed(d, w2, 120, (220, 30, 38), int(W * 0.95), seed=22) if w2 else None
+    layer1 = fit_distressed(d, w1, int(150 * SCALE), (255, 255, 255), int(W * 0.95), seed=11)
+    layer2 = fit_distressed(d, w2, int(120 * SCALE), (220, 30, 38), int(W * 0.95), seed=22) if w2 else None
 
-    ty = tag_y + 20
-    ty2 = ty + layer1.height - 30
+    ty = tag_y + int(20 * SCALE)
+    ty2 = ty + layer1.height - int(30 * SCALE)
 
-    stroke1 = brush_stroke(int(W * 0.6), 14, RED, seed=31)
-    stroke2 = brush_stroke(int(W * 0.35), 9, RED, seed=32)
-    under_y = ty2 + (layer2.height if layer2 else layer1.height) - 40
+    stroke1 = brush_stroke(int(W * 0.6), max(8, int(14 * SCALE)), RED, seed=31)
+    stroke2 = brush_stroke(int(W * 0.35), max(6, int(9 * SCALE)), RED, seed=32)
+    under_y = ty2 + (layer2.height if layer2 else layer1.height) - int(40 * SCALE)
     img.paste(stroke1, (int(W * 0.2), under_y), stroke1)
-    img.paste(stroke2, (int(W * 0.08), under_y + 20), stroke2)
+    img.paste(stroke2, (int(W * 0.08), under_y + int(20 * SCALE)), stroke2)
 
     img.paste(layer1, (int((W - layer1.width) / 2), ty), layer1)
     if layer2:
